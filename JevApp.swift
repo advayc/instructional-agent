@@ -1,5 +1,5 @@
 import AppKit
-final class JevApp: NSObject, NSApplicationDelegate {
+final class JevApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
     let popup = PopupPanel()
     let overlay = OverlayWindow()
     var lastCmd: TimeInterval = 0
@@ -21,6 +21,10 @@ final class JevApp: NSObject, NSApplicationDelegate {
         NSApp.activate(ignoringOtherApps: true)
         popup.makeKey()
         popup.makeFirstResponder(popup.input)
+        popup.delegate = self
+        for t in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
+            popup.standardWindowButton(t)?.isHidden = false
+        }
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] e in
             if e.keyCode == 53 { self?.toggle(hide: true); return nil }
             return e
@@ -73,6 +77,10 @@ final class JevApp: NSObject, NSApplicationDelegate {
         p.launchPath = "/usr/bin/osascript"
         p.arguments = ["-e", src]
         try? p.run()
+    }
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        popup.orderOut(nil)
+        return false
     }
     func toggle(hide: Bool = false) {
         if popup.isVisible {

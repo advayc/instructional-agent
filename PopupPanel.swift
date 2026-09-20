@@ -91,6 +91,8 @@ final class PopupPanel: NSPanel {
         let dark = UserDefaults.standard.string(forKey: "AppleInterfaceStyle") == "Dark"
         box.layer?.backgroundColor = (dark ? NSColor(white: 1, alpha: 0.12) : NSColor(white: 0, alpha: 0.06)).cgColor
     }
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { true }
     override func mouseDown(with e: NSEvent) {
         dragAt = e.locationInWindow
     }

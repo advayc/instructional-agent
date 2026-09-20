@@ -1,45 +1,39 @@
-# jev — macOS text assistant
+# jev — macOS assistant
 
-Spotlight-style popup for asking questions without leaving current app. Text-only. Stdlib Swift, no dependencies.
+Spotlight-style popup + CLI. Stdlib Swift, no deps.
 
 ## Use
 
-Every query routes through `jev` CLI core:
+```
+./run.sh "question"   # one shot
+./run.sh              # REPL, `exit` quits
+open Jev.app          # UI: type, Enter. Double-Cmd toggles.
+./build-app.sh        # rebuild UI + bundle
+```
 
-```
-./run.sh "go to Appearance and change to light mode"
-./run.sh            # interactive REPL with history, `exit` quits
-```
+Popup sends screenshot with every ask (vision). Frontmost-app row for context.
 
-`run.sh` loads ignored `.env` and execs compiled `jev` binary. Rebuild after editing source:
-
-```
-swiftc -O jev.swift -o jev
-```
+Commands: `dark mode` / `light mode` run locally. `click <thing>` locates it on screen, glides real cursor, clicks. All else answered as short macOS steps.
 
 ## Files
 
-- `jev.swift` — text core. Reads `AI_GATEWAY_API_KEY` (falls back to `AI_GATEWAY_API_KEY_BACKUP`), posts to AI Gateway chat endpoint.
-- `run.sh` — sources `.env`, execs `jev`. Use this, not raw `swift`.
-- `PopupPanel.swift` — centered Spotlight-style panel. Placeholder "What should I do?", context row shows frontmost app name.
-- `OverlayWindow.swift` — fullscreen transparent overlay, yellow dashed ring + label for pointing at things on screen.
-- `JevApp.swift` — app entry wiring popup + overlay + double-Cmd hotkey.
-- `.env` — ignored secret storage. Never commit.
+- `jev.swift` — CLI core. `run.sh` loads ignored `.env`, prefers compiled `jev` binary.
+- `PopupPanel.swift` — Spotlight card: frontmost-app row, input, answers.
+- `OverlayWindow.swift` — marker + label at target point.
+- `Cursor.swift` — real cursor glide + click (`CGEvent`, eased).
+- `JevApp.swift` — entry: hotkey, mode toggle, `click` → locate + glide + click.
+- `main.swift`, `build-app.sh`, `Jev.app`, `.env` (ignored keys).
 
-## Env (.env)
+## Env
 
 ```
-AI_GATEWAY_API_KEY=<primary key>
-AI_GATEWAY_API_KEY_BACKUP=<backup key, optional>
+AI_GATEWAY_API_KEY=<primary>
+AI_GATEWAY_API_KEY_BACKUP=<backup, optional>
 AI_GATEWAY_MODEL=vmc/jev
 ```
 
-Primary first, backup when primary empty.
+Primary first, backup when empty. Model = Virtual Model → `openai/gpt-5-nano` (cheapest, free-tier). Retarget slug in dashboard, no redeploy.
 
-## Model
+## Permissions
 
-Default `vmc/jev`: Virtual Model slug pointing at `openai/gpt-5-nano` ($0.05/1M input, $0.40/1M output), free-tier eligible, fast. Retarget slug in Gateway dashboard to swap models with no redeploy. Step up to `openai/gpt-5-mini` only when answers need more reasoning.
-
-## macOS permissions
-
-Grant Accessibility + Input Monitoring or double-Cmd hotkey and real cursor control will not work. Fake overlay ring needs none.
+Accessibility + Input Monitoring required for hotkey and real cursor. Overlay needs none.

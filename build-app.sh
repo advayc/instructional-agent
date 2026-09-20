@@ -31,4 +31,5 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 PLIST
 echo "built $APP"
 pkill -x jev-ui 2>/dev/null || true
+sleep 1
 open "$APP"
