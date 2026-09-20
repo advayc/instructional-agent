@@ -1,22 +1,33 @@
 import AppKit
 final class JevApp: NSObject, NSApplicationDelegate {
     let popup = PopupPanel()
-    let overlay = OverlayWindow()
     var lastCmd: TimeInterval = 0
     func applicationDidFinishLaunching(_ n: Notification) {
-        let mask = (1 << CGEventType.keyDown.rawValue) | (1 << CGEventType.keyUp.rawValue)
-        guard let tap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap, eventsOfInterest: CGEventMask(mask), callback: { _, _, _, _ in nil }, userInfo: nil) else { return }
-        CFRunLoopAddSource(CFRunLoopGetCurrent(), CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0), .commonModes)
-        CGEvent.tapEnable(tap: tap, enable: true)
+        NSApp.setActivationPolicy(.accessory)
+        popup.input.target = self
+        popup.input.action = #selector(send(_:))
+        popup.center()
+        popup.orderFrontRegardless()
+        NSApp.activate(ignoringOtherApps: true)
+        popup.makeKey()
+        popup.makeFirstResponder(popup.input)
+        NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { [weak self] e in
+            guard e.modifierFlags.contains(.command), e.keyCode == 55 || e.keyCode == 54 else { return }
+            let now = Date().timeIntervalSince1970
+            if now - (self?.lastCmd ?? 0) < 0.4 { self?.toggle() }
+            self?.lastCmd = now
+        }
     }
-    func togglePopup() {
-        popup.isVisible ? popup.orderOut(nil) : popup.center()
+    @objc func send(_ s: NSTextField) {
+        popup.ask(s.stringValue)
     }
-    func highlight(at p: NSPoint, label l: String) {
-        overlay.show(at: p, label: l)
+    func toggle() {
+        if popup.isVisible {
+            popup.orderOut(nil)
+        } else {
+            popup.center()
+            popup.orderFrontRegardless()
+            NSApp.activate(ignoringOtherApps: true)
+        }
     }
 }
-let app = NSApplication.shared
-let delegate = JevApp()
-app.delegate = delegate
-app.run()

@@ -25,6 +25,8 @@ Ask anything through jev (the CLI core — every query routes through it):
 - `OverlayWindow.swift` — fullscreen transparent overlay, yellow dashed
   ring + label for pointing at things on screen.
 - `JevApp.swift` — app entry wiring popup + overlay + double-Cmd hotkey.
+- `main.swift` — top-level entry for `swiftc` builds (no Xcode project).
+- `jev-ui` — compiled UI binary (`swiftc -O JevApp.swift PopupPanel.swift OverlayWindow.swift main.swift -o jev-ui`). Launch it, type, hit Enter.
 - `.env` — ignored secret storage. Never commit. Holds primary key,
   backup key, and model.
 
