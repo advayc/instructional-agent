@@ -6,11 +6,10 @@ set -a
 source "$DIR/.env"
 set +a
 swiftc -O "$DIR/jev.swift" -o "$DIR/jev"
-swiftc -O "$DIR/JevApp.swift" "$DIR/PopupPanel.swift" "$DIR/OverlayWindow.swift" "$DIR/Cursor.swift" "$DIR/main.swift" -o "$DIR/jev-ui"
+swiftc -O "$DIR/Guide.swift" "$DIR/JevApp.swift" "$DIR/PopupPanel.swift" "$DIR/OverlayWindow.swift" "$DIR/main.swift" -o "$DIR/jev-ui"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$DIR/jev-ui" "$APP/Contents/MacOS/jev-ui"
-cp "$DIR/.env" "$APP/Contents/Resources/env"
 cat > "$APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

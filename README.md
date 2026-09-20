@@ -1,39 +1,53 @@
-# jev — macOS assistant
+# jev — on-screen macOS guide
 
-Spotlight-style popup + CLI. Stdlib Swift, no deps.
+Jev is a fast, visual guide rather than a chatbot. Describe a task, then it
+points to one visible control at a time with a transparent virtual cursor and
+a type-on caption. You remain in control of the real mouse and keyboard.
 
 ## Use
 
-```
-./run.sh "question"   # one shot
-./run.sh              # REPL, `exit` quits
-open Jev.app          # UI: type, Enter. Double-Cmd toggles.
-./build-app.sh        # rebuild UI + bundle
+```sh
+./run.sh "question"   # text-only CLI helper
+./run.sh              # CLI REPL; `exit` quits
+./build-app.sh        # rebuild and launch the AppKit app
+open Jev.app          # type a task and press Return
 ```
 
-Popup sends screenshot with every ask (vision). Frontmost-app row for context.
+The app hides its prompt once a guide starts. Click the marked control, type,
+or scroll as the caption asks; Jev captures the updated screen and immediately
+draws the next step. If it cannot observe an action, press Option-Right Arrow
+to advance manually. Escape stops the guide, and double-Command toggles Jev.
 
-Commands: `dark mode` / `light mode` run locally. `click <thing>` locates it on screen, glides real cursor, clicks. All else answered as short macOS steps.
+The overlay is visual only: it never moves, clicks, or types with the real
+cursor.
 
 ## Files
 
-- `jev.swift` — CLI core. `run.sh` loads ignored `.env`, prefers compiled `jev` binary.
-- `PopupPanel.swift` — Spotlight card: frontmost-app row, input, answers.
-- `OverlayWindow.swift` — marker + label at target point.
-- `Cursor.swift` — real cursor glide + click (`CGEvent`, eased).
-- `JevApp.swift` — entry: hotkey, mode toggle, `click` → locate + glide + click.
-- `main.swift`, `build-app.sh`, `Jev.app`, `.env` (ignored keys).
+- `JevApp.swift` — app lifecycle, guide progression, hotkey, and action detection.
+- `Guide.swift` — validated one-step guide model; model output is never executed.
+- `PopupPanel.swift` — compact task prompt, screenshot request, and grounded next-step API call.
+- `OverlayWindow.swift` — click-through transparent virtual cursor and animated caption.
+- `jev.swift` — separate text-only CLI core.
+- `build-app.sh`, `main.swift`, `Jev.app`, `.env` (ignored keys).
 
-## Env
+The UI is plain AppKit compiled with `swiftc`; it uses neither SwiftUI nor
+Xcode, so Electron is not needed.
 
-```
+## Environment
+
+```sh
 AI_GATEWAY_API_KEY=<primary>
 AI_GATEWAY_API_KEY_BACKUP=<backup, optional>
 AI_GATEWAY_MODEL=vmc/jev
 ```
 
-Primary first, backup when empty. Model = Virtual Model → `openai/gpt-5-nano` (cheapest, free-tier). Retarget slug in dashboard, no redeploy.
+Keep `.env` beside the development `Jev.app` or provide the values through the
+launch environment. `build-app.sh` deliberately does **not** copy `.env` into
+the app bundle. Do not distribute a bundle containing a personal gateway key;
+use a Keychain-backed or server-side credential flow first.
 
 ## Permissions
 
-Accessibility + Input Monitoring required for hotkey and real cursor. Overlay needs none.
+- **Screen Recording** — lets Jev identify the currently visible control.
+- **Input Monitoring** — lets it notice your click, typing, or scroll and move
+  to the next guide step. The app still cannot and does not send input for you.
