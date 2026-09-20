@@ -53,6 +53,18 @@ final class JevApp: NSObject, NSApplicationDelegate {
             popup.output.string = on ? "Dark mode on." : "Light mode on."
             return
         }
+        if lq.hasPrefix("click ") || lq.hasPrefix("press ") {
+            let target = String(q.dropFirst(6))
+            popup.output.string = "looking…"
+            popup.locate(target) { [weak self] pt in
+                guard let pt = pt else { self?.popup.output.string = "not found."; return }
+                DispatchQueue.global().async {
+                    Cursor.click(at: pt)
+                    DispatchQueue.main.async { self?.overlay.show(at: pt, label: target) }
+                }
+            }
+            return
+        }
         popup.ask(q)
         overlay.show(at: NSEvent.mouseLocation, label: String(q.prefix(40)))
     }

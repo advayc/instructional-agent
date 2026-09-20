@@ -5,7 +5,7 @@ APP="$DIR/Jev.app"
 set -a
 source "$DIR/.env"
 set +a
-swiftc -O "$DIR/JevApp.swift" "$DIR/PopupPanel.swift" "$DIR/OverlayWindow.swift" "$DIR/main.swift" -o "$DIR/jev-ui"
+swiftc -O "$DIR/JevApp.swift" "$DIR/PopupPanel.swift" "$DIR/OverlayWindow.swift" "$DIR/Cursor.swift" "$DIR/main.swift" -o "$DIR/jev-ui"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$DIR/jev-ui" "$APP/Contents/MacOS/jev-ui"
