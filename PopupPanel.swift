@@ -5,14 +5,18 @@ final class PopupPanel: NSPanel {
     let box = NSView(frame: .zero)
     let hint = NSTextField(labelWithString: "What should I do?")
     let input = NSTextField(frame: .zero)
+    let pasteButton = NSButton(frame: .zero)
     let output = NSTextView(frame: .zero)
+    var dragAt = NSZeroPoint
     convenience init() {
-        self.init(contentRect: NSRect(x: 0, y: 0, width: 680, height: 380), styleMask: [.titled, .closable, .miniaturizable, .resizable, .nonactivatingPanel, .fullSizeContentView], backing: .buffered, defer: false)
+        self.init(contentRect: NSRect(x: 0, y: 0, width: 680, height: 380), styleMask: [.titled, .nonactivatingPanel, .fullSizeContentView, .resizable], backing: .buffered, defer: false)
         isFloatingPanel = true
-        title = "Jev"
-        titleVisibility = .visible
+        titleVisibility = .hidden
         titlebarAppearsTransparent = true
         isMovableByWindowBackground = true
+        backgroundColor = .clear
+        isOpaque = false
+        alphaValue = 1.0
         center()
         guard let cv = contentView else { return }
         cv.wantsLayer = true
@@ -26,35 +30,41 @@ final class PopupPanel: NSPanel {
         cv.addSubview(fx)
         let app = NSWorkspace.shared.frontmostApplication
         appIcon.image = app?.icon ?? NSImage(systemSymbolName: "sparkles", accessibilityDescription: nil)
-        appIcon.frame = NSRect(x: 0, y: 322, width: 30, height: 30)
-        cv.addSubview(appIcon)
         context.font = NSFont.systemFont(ofSize: 16, weight: .semibold)
         context.textColor = .secondaryLabelColor
         context.stringValue = app?.localizedName ?? "macOS"
         context.sizeToFit()
-        context.frame = NSRect(x: 0, y: 324, width: context.frame.width, height: 24)
+        let sx = (680 - (30 + 8 + context.frame.width)) / 2
+        appIcon.frame = NSRect(x: sx, y: 322, width: 30, height: 30)
+        cv.addSubview(appIcon)
+        context.frame = NSRect(x: sx + 38, y: 324, width: context.frame.width, height: 24)
         cv.addSubview(context)
-        let contextGroupWidth = appIcon.frame.width + 8 + context.frame.width
-        let contextGroupX = (cv.bounds.width - contextGroupWidth) / 2
-        appIcon.frame.origin.x = contextGroupX
-        context.frame.origin.x = contextGroupX + appIcon.frame.width + 8
         box.frame = NSRect(x: 24, y: 176, width: 632, height: 122)
         box.wantsLayer = true
         box.layer?.cornerRadius = 18
-        box.layer?.borderWidth = 1
         box.autoresizingMask = [.width, .minYMargin]
         cv.addSubview(box)
         hint.font = NSFont.systemFont(ofSize: 14)
         hint.textColor = .secondaryLabelColor
         hint.frame = NSRect(x: 22, y: 76, width: 588, height: 20)
         box.addSubview(hint)
-        input.font = NSFont.systemFont(ofSize: 18)
+        input.font = NSFont.systemFont(ofSize: 16)
         input.textColor = .labelColor
         input.drawsBackground = false
         input.isBordered = false
         input.focusRingType = .none
-        input.frame = NSRect(x: 20, y: 22, width: 592, height: 36)
+        input.frame = NSRect(x: 20, y: 22, width: 536, height: 30)
+        input.autoresizingMask = [.width]
         box.addSubview(input)
+        pasteButton.image = NSImage(systemSymbolName: "doc.on.clipboard", accessibilityDescription: "Paste")
+        pasteButton.bezelStyle = .inline
+        pasteButton.isBordered = false
+        pasteButton.imageScaling = .scaleProportionallyDown
+        pasteButton.target = self
+        pasteButton.action = #selector(paste)
+        pasteButton.frame = NSRect(x: 566, y: 18, width: 44, height: 40)
+        pasteButton.autoresizingMask = [.minXMargin]
+        box.addSubview(pasteButton)
         let scroll = NSScrollView(frame: NSRect(x: 24, y: 20, width: 632, height: 140))
         scroll.hasVerticalScroller = true
         scroll.autoresizingMask = [.width, .height]
@@ -68,15 +78,27 @@ final class PopupPanel: NSPanel {
         updateTheme()
         DistributedNotificationCenter.default().addObserver(self, selector: #selector(themeChanged), name: NSNotification.Name("AppleInterfaceThemeChangedNotification"), object: nil)
     }
+    @objc func paste() {
+        if let s = NSPasteboard.general.string(forType: .string) {
+            input.stringValue = s
+        }
+        makeFirstResponder(input)
+    }
     @objc func themeChanged() {
         updateTheme()
     }
     func updateTheme() {
         let dark = UserDefaults.standard.string(forKey: "AppleInterfaceStyle") == "Dark"
-        let accent = NSColor(calibratedRed: 0.20, green: 0.86, blue: 0.48, alpha: 1)
-        box.layer?.backgroundColor = (dark ? NSColor(white: 1, alpha: 0.10) : NSColor(white: 1, alpha: 0.34)).cgColor
-        box.layer?.borderColor = accent.withAlphaComponent(dark ? 0.42 : 0.30).cgColor
-        hint.textColor = accent.withAlphaComponent(0.9)
+        box.layer?.backgroundColor = (dark ? NSColor(white: 1, alpha: 0.12) : NSColor(white: 0, alpha: 0.06)).cgColor
+    }
+    override func mouseDown(with e: NSEvent) {
+        dragAt = e.locationInWindow
+    }
+    override func mouseDragged(with e: NSEvent) {
+        var f = frame
+        f.origin.x += e.locationInWindow.x - dragAt.x
+        f.origin.y += e.locationInWindow.y - dragAt.y
+        setFrame(f, display: true)
     }
     func screenshot() -> String? {
         let p = Process()

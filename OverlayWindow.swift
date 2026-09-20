@@ -1,54 +1,72 @@
 import AppKit
 final class OverlayWindow: NSWindow {
-    var point = NSZeroPoint
-    var label = ""
-    let ring = RingView(frame: .zero)
+    let mark = MarkView(frame: .zero)
+    var timer: Timer?
     init() {
         super.init(contentRect: NSScreen.main?.frame ?? .zero, styleMask: .borderless, backing: .buffered, defer: false)
         backgroundColor = .clear
         isOpaque = false
         ignoresMouseEvents = true
         level = .screenSaver
-        ring.frame = contentLayoutRect
-        ring.autoresizingMask = [.width, .height]
-        contentView = ring
+        mark.frame = contentLayoutRect
+        mark.autoresizingMask = [.width, .height]
+        contentView = mark
     }
     func show(at p: NSPoint, label l: String) {
-        ring.point = p
-        ring.label = l
-        ring.needsDisplay = true
+        mark.label = l
+        mark.target = p
+        if !mark.placed {
+            mark.point = p
+            mark.placed = true
+        }
+        mark.needsDisplay = true
         orderFrontRegardless()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 6) { [weak self] in self?.orderOut(nil) }
+        timer?.invalidate()
+        let end = Date().addingTimeInterval(6)
+        timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60, repeats: true) { [weak self] t in
+            guard let self = self else { t.invalidate(); return }
+            if Date() > end { t.invalidate(); self.orderOut(nil); return }
+            let m = self.mark
+            m.point = CGPoint(x: m.point.x + (m.target.x - m.point.x) * 0.18, y: m.point.y + (m.target.y - m.point.y) * 0.18)
+            m.needsDisplay = true
+        }
     }
     func hide() {
+        timer?.invalidate()
         orderOut(nil)
     }
 }
-final class RingView: NSView {
+final class MarkView: NSView {
     var point = NSZeroPoint
+    var target = NSZeroPoint
+    var placed = false
     var label = ""
     override func draw(_ r: NSRect) {
-        let accent = NSColor(calibratedRed: 0.20, green: 0.86, blue: 0.48, alpha: 1)
-        accent.withAlphaComponent(0.16).setFill()
-        NSBezierPath(ovalIn: NSRect(x: point.x - 42, y: point.y - 42, width: 84, height: 84)).fill()
-        accent.setStroke()
-        let path = NSBezierPath(ovalIn: NSRect(x: point.x - 40, y: point.y - 40, width: 80, height: 80))
-        path.setLineDash([8, 6], count: 2, phase: 0)
-        path.lineWidth = 3
-        path.stroke()
-        let text = label as NSString
-        let textAttributes: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 13, weight: .medium),
-            .foregroundColor: NSColor.white
-        ]
-        let textSize = text.size(withAttributes: textAttributes)
-        let pill = NSRect(x: point.x - textSize.width / 2 - 14, y: point.y + 54, width: textSize.width + 28, height: 28)
-        NSColor(calibratedWhite: 0.08, alpha: 0.72).setFill()
-        NSBezierPath(roundedRect: pill, xRadius: 14, yRadius: 14).fill()
-        accent.withAlphaComponent(0.65).setStroke()
-        let border = NSBezierPath(roundedRect: pill, xRadius: 14, yRadius: 14)
-        border.lineWidth = 1
-        border.stroke()
-        text.draw(at: NSPoint(x: pill.minX + 14, y: pill.minY + 7), withAttributes: textAttributes)
+        let font = NSFont.boldSystemFont(ofSize: 17)
+        let ts = (label as NSString).size(withAttributes: [.font: font])
+        let pw = ts.width + 32
+        let ph: CGFloat = 38
+        let px = point.x - pw / 2
+        let py = point.y + 48
+        let pill = NSBezierPath(roundedRect: NSRect(x: px, y: py, width: pw, height: ph), xRadius: 12, yRadius: 12)
+        NSColor(calibratedRed: 0.95, green: 0.72, blue: 0.15, alpha: 0.95).setFill()
+        pill.fill()
+        let style = NSMutableParagraphStyle()
+        style.alignment = .center
+        (label as NSString).draw(in: NSRect(x: px, y: py + 9, width: pw, height: 22), withAttributes: [.font: font, .foregroundColor: NSColor.white, .paragraphStyle: style])
+        let arrow = NSBezierPath()
+        arrow.move(to: NSPoint(x: point.x, y: point.y))
+        arrow.line(to: NSPoint(x: point.x, y: point.y - 30))
+        arrow.line(to: NSPoint(x: point.x + 7.5, y: point.y - 22.5))
+        arrow.line(to: NSPoint(x: point.x + 11, y: point.y - 29))
+        arrow.line(to: NSPoint(x: point.x + 14, y: point.y - 27.5))
+        arrow.line(to: NSPoint(x: point.x + 10.5, y: point.y - 21))
+        arrow.line(to: NSPoint(x: point.x + 17, y: point.y - 21))
+        arrow.close()
+        NSColor(calibratedRed: 0.95, green: 0.72, blue: 0.15, alpha: 0.85).setFill()
+        arrow.fill()
+        NSColor.white.setStroke()
+        arrow.lineWidth = 2
+        arrow.stroke()
     }
 }

@@ -78,7 +78,6 @@ final class JevApp: NSObject, NSApplicationDelegate {
         if popup.isVisible {
             popup.orderOut(nil)
         } else if !hide {
-            popup.center()
             popup.orderFrontRegardless()
             NSApp.activate(ignoringOtherApps: true)
             popup.makeFirstResponder(popup.input)

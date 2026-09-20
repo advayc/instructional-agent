@@ -5,7 +5,7 @@ enum Cursor {
     }
     static func smoothMove(to t: CGPoint) {
         let from = pos()
-        let steps = 48
+        let steps = 72
         for i in 1...steps {
             let e = Double(i) / Double(steps)
             let k = e * e * (3 - 2 * e)
@@ -13,7 +13,7 @@ enum Cursor {
             if let ev = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: p, mouseButton: .left) {
                 ev.post(tap: .cgSessionEventTap)
             }
-            Thread.sleep(forTimeInterval: 0.008)
+            Thread.sleep(forTimeInterval: 0.012)
         }
     }
     static func click(at t: CGPoint) {

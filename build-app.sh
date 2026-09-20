@@ -5,6 +5,7 @@ APP="$DIR/Jev.app"
 set -a
 source "$DIR/.env"
 set +a
+swiftc -O "$DIR/jev.swift" -o "$DIR/jev"
 swiftc -O "$DIR/JevApp.swift" "$DIR/PopupPanel.swift" "$DIR/OverlayWindow.swift" "$DIR/Cursor.swift" "$DIR/main.swift" -o "$DIR/jev-ui"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
@@ -29,3 +30,5 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 </plist>
 PLIST
 echo "built $APP"
+pkill -x jev-ui 2>/dev/null || true
+open "$APP"
