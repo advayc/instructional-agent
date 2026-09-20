@@ -9,9 +9,11 @@ Ask anything through jev (the CLI core — every query routes through it):
 
 ```
 ./run.sh "go to Appearance and change to light mode"
+./run.sh            # interactive REPL with history, `exit` quits
 ```
 
-`run.sh` loads the ignored `.env` and runs `jev.swift` against AI Gateway.
+`run.sh` loads the ignored `.env` and execs the compiled `jev` binary
+(rebuild with `swiftc -O jev.swift -o jev` after editing the source).
 
 ## Files
 
