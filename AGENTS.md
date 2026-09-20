@@ -27,6 +27,8 @@ Ask anything through jev (the CLI core — every query routes through it):
 - `JevApp.swift` — app entry wiring popup + overlay + double-Cmd hotkey.
 - `main.swift` — top-level entry for `swiftc` builds (no Xcode project).
 - `jev-ui` — compiled UI binary (`swiftc -O JevApp.swift PopupPanel.swift OverlayWindow.swift main.swift -o jev-ui`). Launch it, type, hit Enter.
+- `build-app.sh` — rebuilds `jev-ui` and assembles `Jev.app` (draggable
+  panel, no Xcode). Open with Finder double-click or `open Jev.app`.
 - `.env` — ignored secret storage. Never commit. Holds primary key,
   backup key, and model.
 

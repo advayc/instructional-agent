@@ -1,4 +1,7 @@
 .env
-.DS_Store/
+Jev.app/
+.DS_Store
 /build/
 *.xcuserdata/
+/jev
+/jev-ui
