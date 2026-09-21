@@ -370,14 +370,20 @@ final class JevApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return "Computer-use isn't set up."
         }
         let query = ([music.title] + (music.artist.map { [$0] } ?? [])).joined(separator: " ")
+        let byArtist = music.artist.map { " (artist \($0))" } ?? ""
         var args = ["examples/do.py",
-                    "In Spotify, find '\(music.title)'\(music.artist.map { " by \($0)" } ?? "") and start playing it.",
+                    "In Spotify: click Search, type the search query, then in the Songs results double-click the row titled '\(music.title)'\(byArtist) so it starts playing.",
                     "--app", "Spotify",
-                    "--verify", "Spotify shows '\(music.title)' as the currently playing track.",
+                    "--verify", "The Spotify now-playing bar shows '\(music.title)' as the current track.",
                     "--input", "search_query=\(query)",
                     "--input", "song=\(music.title)"]
-        if let artist = music.artist { args += ["--input", "artist=\(artist)"] }
-        args += ["--constraint", "Do not modify the library.",
+        if let artist = music.artist {
+            args += ["--input", "artist=\(artist)",
+                     "--verify", "The Spotify now-playing bar shows artist '\(artist)'."]
+        }
+        args += ["--constraint", "Do not open the artist profile page.",
+                 "--constraint", "Do not play a Top Song from an artist page — only the '\(music.title)' track row from search results.",
+                 "--constraint", "Do not modify the library.",
                  "--constraint", "Do not add anything to a playlist.",
                  "--max-actions", "20",
                  "--no-wait"]
@@ -397,16 +403,25 @@ final class JevApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         proc.waitUntilExit()
         let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        // Trust Spotify itself over the plan status: confirm what's playing.
-        if let now = spotifyNowPlaying(), now.lowercased().contains(music.title.lowercased()) {
+        // Ground truth comes from Spotify itself, never the agent's judgment:
+        // it previously played the artist's top song and called it done.
+        if let now = spotifyNowPlaying(), nowPlaying(now, matches: music) {
             return "Playing \(now) on Spotify."
         }
-        // The found row is usually selected but paused — Return starts it.
-        pressReturnForSpotify()
-        if let now = spotifyNowPlaying(), now.lowercased().contains(music.title.lowercased()) {
-            return "Playing \(now) on Spotify."
+        // Nothing playing: the found row may be selected but paused, so
+        // Return starts it. Skip this when the wrong song is already playing.
+        if spotifyNowPlaying() == nil {
+            pressReturnForSpotify()
+            if let now = spotifyNowPlaying(), nowPlaying(now, matches: music) {
+                return "Playing \(now) on Spotify."
+            }
         }
-        if out.contains("SUBTASK_COMPLETE") { return "Playing \(music.title) on Spotify." }
+        if let now = spotifyNowPlaying() {
+            return "Spotify is playing '\(now)' instead of '\(music.title)'. Say the exact title again and I'll retry."
+        }
+        if out.contains("SUBTASK_COMPLETE") {
+            return "The run claimed success but Spotify shows nothing playing. Say the exact title again and I'll retry."
+        }
         if let line = out.split(separator: "\n").first(where: { $0.hasPrefix("status:") }) {
             let playing = spotifyNowPlaying().map { " Spotify shows '\($0)' playing." } ?? ""
             return "Spotify run ended — \(line).\(playing)"
@@ -420,6 +435,15 @@ final class JevApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
         Thread.sleep(forTimeInterval: 0.5)
         NSAppleScript(source: "tell application \"System Events\" to keystroke return")?.executeAndReturnError(nil)
         Thread.sleep(forTimeInterval: 1.5)
+    }
+
+    /// "Title — Artist" matches when the track contains the requested title
+    /// and, when an artist was given, the artist as well.
+    private func nowPlaying(_ now: String, matches music: MusicRequest) -> Bool {
+        let text = now.lowercased()
+        guard text.contains(music.title.lowercased()) else { return false }
+        guard let artist = music.artist else { return true }
+        return text.contains(artist.lowercased())
     }
 
     /// Deterministic check via AppleScript: "Title — Artist" or nil.
