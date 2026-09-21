@@ -14,6 +14,8 @@ final class JevApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var eventMonitors: [Any] = []
     private var workspaceObserver: NSObjectProtocol?
     private var canObserveGlobalInput = false
+    private let cursor = CursorDriver()
+    private var isExecutingApprovedStep = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -25,11 +27,17 @@ final class JevApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
         popup.input.target = self
         popup.input.action = #selector(send(_:))
         popup.delegate = self
+        popup.onApprovalChanged = { [weak self] enabled in
+            self?.approvalChanged(enabled)
+        }
         for button in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
             popup.standardWindowButton(button)?.isHidden = false
         }
         showPrompt()
         installEventMonitors()
+        if popup.autoApprovalEnabled {
+            approvalChanged(true)
+        }
     }
 
     private func installMenu() {
@@ -153,6 +161,25 @@ final class JevApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return event
     }
 
+    private func approvalChanged(_ enabled: Bool) {
+        guard enabled else {
+            cursor.cancel()
+            isExecutingApprovedStep = false
+            return
+        }
+        guard GuideDesktopSnapshot.accessibilityIsAvailable else {
+            popup.setAutoApprovalEnabled(false, persist: true)
+            popup.showSetupIssue("Allow Jev in Accessibility before turning on Approve for me.")
+            return
+        }
+        guard canObserveGlobalInput else {
+            popup.setAutoApprovalEnabled(false, persist: true)
+            popup.showSetupIssue("Allow Jev in Input Monitoring and reopen it so Esc can stop an approved run instantly.")
+            return
+        }
+        popup.status.stringValue = "Approval is on — Jev will complete routine on-screen steps for your next request."
+    }
+
     private func isManualAdvance(_ event: NSEvent) -> Bool {
         event.type == .keyDown && event.keyCode == 124 && event.modifierFlags.contains(.option)
     }
@@ -161,6 +188,10 @@ final class JevApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let task = sender.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !task.isEmpty else { return }
         if performNativeAction(task) { return }
+        if performComputerUse(task) { return }
+        // Anything naming a concrete app gets action or a visual guide —
+        // never a prose how-to.
+        if guideTargetAppName(for: task) != nil { startGuide(task: task); return }
         if performDirectAnswer(task) { return }
         startGuide(task: task)
     }
@@ -196,18 +227,169 @@ final class JevApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func isGeneralQuestion(_ task: String) -> Bool {
         let lower = task.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        let actionWords = ["click", "open", "turn on", "turn off", "enable", "disable",
+                           "set ", "change ", "switch ", "timer", "alarm", "remind",
+                           "mute", "unmute", "volume", "dark mode", "light mode",
+                           "install", "download", "create file", "delete ", "move ",
+                           "play", "search", "find ", "press", "song", "spotify", "pause",
+                           "text ", "message ", "send ", "reply "]
+        if actionWords.contains(where: { lower.contains($0) }) { return false }
         if lower.hasSuffix("?") { return true }
         let starters = ["what ", "what's ", "whats ", "who ", "why ", "how ", "when ", "where ",
                         "explain ", "define ", "summarize ", "summarise ", "tell me ", "write ",
                         "draft ", "compose ", "calculate ", "convert ", "translate "]
         if starters.contains(where: { lower.hasPrefix($0) }) { return true }
         // No actionable macOS verb → treat as chat, not a click-guide.
-        let actionWords = ["click", "open", "turn on", "turn off", "enable", "disable",
-                           "set ", "change ", "switch ", "timer", "alarm", "remind",
-                           "mute", "unmute", "volume", "dark mode", "light mode",
-                           "install", "download", "create file", "delete ", "move "]
         if !actionWords.contains(where: { lower.contains($0) }) { return true }
         return false
+    }
+
+    /// Real execution via arc-cua: "play SICKO MODE by Travis Scott on Spotify".
+    /// Falls through to the visual guide when computer-use isn't set up.
+    private func performComputerUse(_ task: String) -> Bool {
+        guard let music = parseMusicTask(task) else { return false }
+        guard arcCuaDir() != nil, typesafeKey() != nil else { return false }
+        popup.preparingAction()
+        popup.status.stringValue = "Playing \(music.title) on Spotify — hands off for a moment…"
+        // Focus Spotify first so the run doesn't observe the wrong app.
+        NSWorkspace.shared.launchApplication("Spotify")
+        popup.orderFrontRegardless()
+        NSApp.activate(ignoringOtherApps: true)
+        DispatchQueue.global(qos: .userInteractive).async { [weak self] in
+            let message = self?.runComputerUse(music: music) ?? "Computer-use failed to start."
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.popup.reset(message: message)
+                self.overlay.showCompletion(message)
+                self.popup.orderFrontRegardless()
+                NSApp.activate(ignoringOtherApps: true)
+                self.popup.makeKey()
+                self.popup.makeFirstResponder(self.popup.input)
+            }
+        }
+        return true
+    }
+
+    private struct MusicRequest { let title: String; let artist: String? }
+
+    private func parseMusicTask(_ task: String) -> MusicRequest? {
+        let lower = task.lowercased()
+        guard lower.contains("spotif") || lower.contains("music") else { return nil }
+        guard lower.contains("play") || lower.contains("search") || lower.contains("listen") else { return nil }
+        var title: String?
+        for pattern in ["\"([^\"]+)\"", "“([^”]+)”", "‘([^’]+)’"] {
+            if let r = task.range(of: pattern, options: .regularExpression) {
+                var t = String(task[r])
+                t.removeFirst(); t.removeLast()
+                title = t.trimmingCharacters(in: .whitespacesAndNewlines)
+                break
+            }
+        }
+        if title == nil,
+           let r = task.range(of: "(play|search for|listen to) (.+?) by ", options: [.regularExpression, .caseInsensitive]) {
+            title = String(task[r]).components(separatedBy: " by ").first?
+                .replacingOccurrences(of: "^(play|search for|listen to) ", with: "", options: [.regularExpression, .caseInsensitive])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        var artist: String?
+        if let r = task.range(of: " by (.+?)( →|\u{2192}|\\.| on spotify|$)", options: [.regularExpression, .caseInsensitive]) {
+            artist = String(task[r].dropFirst(4))
+                .replacingOccurrences(of: "→", with: "")
+                .replacingOccurrences(of: " on spotify", with: "", options: .caseInsensitive)
+                .trimmingCharacters(in: .whitespacesAndNewlines.union(.init(charactersIn: ".")))
+        }
+        guard let title, !title.isEmpty else { return nil }
+        return MusicRequest(title: title, artist: artist?.isEmpty == true ? nil : artist)
+    }
+
+    private func arcCuaDir() -> URL? {
+        let dir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Desktop/jev/arc-cua")
+        return FileManager.default.fileExists(atPath: dir.appendingPathComponent(".venv/bin/python").path) ? dir : nil
+    }
+
+    private func typesafeKey() -> String? {
+        if let k = ProcessInfo.processInfo.environment["TYPESAFE_API_KEY"], !k.isEmpty { return k }
+        // GUI apps don't source ~/.zshrc; read the export directly.
+        guard let text = try? String(contentsOf: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".zshrc"), encoding: .utf8) else { return nil }
+        for line in text.split(separator: "\n") {
+            let t = line.trimmingCharacters(in: .whitespaces)
+            guard t.hasPrefix("export TYPESAFE_API_KEY=") || t.hasPrefix("TYPESAFE_API_KEY=") else { continue }
+            let v = t.split(separator: "=", maxSplits: 1).last.map(String.init) ?? ""
+            let clean = v.trimmingCharacters(in: .whitespacesAndNewlines.union(.init(charactersIn: "\"'")))
+            if !clean.isEmpty { return clean }
+        }
+        return nil
+    }
+
+    private func runComputerUse(music: MusicRequest) -> String {
+        guard let dir = arcCuaDir(), let key = typesafeKey() else {
+            return "Computer-use isn't set up."
+        }
+        let query = ([music.title] + (music.artist.map { [$0] } ?? [])).joined(separator: " ")
+        var args = ["examples/do.py",
+                    "In Spotify, find '\(music.title)'\(music.artist.map { " by \($0)" } ?? "") and start playing it.",
+                    "--app", "Spotify",
+                    "--verify", "Spotify shows '\(music.title)' as the currently playing track.",
+                    "--input", "search_query=\(query)",
+                    "--input", "song=\(music.title)"]
+        if let artist = music.artist { args += ["--input", "artist=\(artist)"] }
+        args += ["--constraint", "Do not modify the library.",
+                 "--constraint", "Do not add anything to a playlist.",
+                 "--max-actions", "20",
+                 "--no-wait"]
+        let proc = Process()
+        proc.executableURL = dir.appendingPathComponent(".venv/bin/python")
+        proc.currentDirectoryURL = dir
+        var environment = ProcessInfo.processInfo.environment
+        environment["PYTHONPATH"] = "src"
+        environment["TYPESAFE_API_KEY"] = key
+        proc.environment = environment
+        proc.arguments = args
+        let pipe = Pipe()
+        proc.standardOutput = pipe
+        proc.standardError = pipe
+        do { try proc.run() } catch {
+            return "Could not start computer-use (\(error.localizedDescription))."
+        }
+        proc.waitUntilExit()
+        let out = String(data: pipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        // Trust Spotify itself over the plan status: confirm what's playing.
+        if let now = spotifyNowPlaying(), now.lowercased().contains(music.title.lowercased()) {
+            return "Playing \(now) on Spotify."
+        }
+        // The found row is usually selected but paused — Return starts it.
+        pressReturnForSpotify()
+        if let now = spotifyNowPlaying(), now.lowercased().contains(music.title.lowercased()) {
+            return "Playing \(now) on Spotify."
+        }
+        if out.contains("SUBTASK_COMPLETE") { return "Playing \(music.title) on Spotify." }
+        if let line = out.split(separator: "\n").first(where: { $0.hasPrefix("status:") }) {
+            let playing = spotifyNowPlaying().map { " Spotify shows '\($0)' playing." } ?? ""
+            return "Spotify run ended — \(line).\(playing)"
+        }
+        return "Spotify run finished (exit \(proc.terminationStatus))."
+    }
+
+    /// The selected row often sits paused; Return starts playback.
+    private func pressReturnForSpotify() {
+        NSWorkspace.shared.launchApplication("Spotify")
+        Thread.sleep(forTimeInterval: 0.5)
+        NSAppleScript(source: "tell application \"System Events\" to keystroke return")?.executeAndReturnError(nil)
+        Thread.sleep(forTimeInterval: 1.5)
+    }
+
+    /// Deterministic check via AppleScript: "Title — Artist" or nil.
+    private func spotifyNowPlaying() -> String? {
+        guard let script = NSAppleScript(source:
+            "tell application \"Spotify\" to get (name of current track) & \" — \" & (artist of current track)") else {
+            return nil
+        }
+        var error: NSDictionary?
+        let result = script.executeAndReturnError(&error)
+        guard error == nil else { return nil }
+        let text = result.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return text.isEmpty ? nil : text
     }
 
     /// Fast path for safe, reversible macOS actions. Unknown requests keep
@@ -280,7 +462,10 @@ final class JevApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// "set a 5 min timer", "timer 10 seconds", "5 minute countdown" → seconds.
     private func requestedDuration(in task: String) -> TimeInterval? {
         let lower = task.lowercased()
-        guard lower.contains("timer") || lower.contains("countdown") || lower.contains("alarm in") else { return nil }
+        guard lower.contains("timer") || lower.contains("countdown") || lower.contains("alarm in")
+            || lower.contains("alarm for") || lower.contains("set an alarm") || lower.contains("set alarm") else {
+            return nil
+        }
         guard let numMatch = lower.range(of: #"\d+(\.\d+)?"#, options: .regularExpression) else { return nil }
         guard let value = Double(lower[numMatch]) else { return nil }
         let multiplier: Double
@@ -385,6 +570,10 @@ final class JevApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if lower.contains("reminder") || lower.contains("todo ") || lower.contains("to-do") { return "Reminders" }
         if lower.contains("note ") || lower.contains("jot ") { return "Notes" }
         if lower.contains("email") || lower.contains("inbox") { return "Mail" }
+        if lower.hasPrefix("text ") || lower.contains(" text ")
+            || lower.hasPrefix("message ") || lower.contains(" message ")
+            || lower.hasPrefix("send ") || lower.contains(" send ")
+            || lower.hasPrefix("reply ") || lower.contains(" reply ") { return "Messages" }
         if lower.contains("event") || lower.contains("meeting") || lower.contains("schedule ") { return "Calendar" }
         if lower.contains("wifi") || lower.contains("wi-fi") || lower.contains("bluetooth")
             || lower.contains("wallpaper") || lower.contains("screensaver")
@@ -479,6 +668,14 @@ final class JevApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if mode == .verify {
             session.verificationAttempts += 1
         }
+        if let expected = session.targetApplicationIdentifier,
+           lastExternalApplication?.bundleIdentifier != expected {
+            pauseGuide("The target app changed while Jev was working, so it stopped before acting in the wrong app.")
+            return
+        }
+        if session.targetApplicationIdentifier == nil {
+            session.targetApplicationIdentifier = lastExternalApplication?.bundleIdentifier
+        }
         isLoadingNextStep = true
         let snapshot = captureSnapshot()
         session.currentSnapshot = snapshot
@@ -489,7 +686,8 @@ final class JevApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
             verification: session.verification,
             frontmostApp: lastExternalAppName,
             snapshot: snapshot,
-            mode: mode
+            mode: mode,
+            approvalEnabled: popup.autoApprovalEnabled
         ) { [weak self] result in
             guard let self, self.guide?.id == session.id else { return }
             self.isLoadingNextStep = false
@@ -565,12 +763,97 @@ final class JevApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
         session.targetBoundsOnScreen = liveTarget?.bounds
         session.currentTargetGuard = liveTarget?.guardToken
         session.currentSnapshotRevision = snapshot?.revision
-        overlay.present(caption: step.trimmedCaption, at: session.targetOnScreen)
+        let stepNumber = session.nextStepIndex + 1
+        let activityCaption = "\(stepNumber)/\(session.steps.count) · \(step.trimmedCaption)"
+        overlay.present(caption: activityCaption, at: session.targetOnScreen)
+        popup.showGuideProgress(
+            step: step,
+            index: stepNumber,
+            total: session.steps.count,
+            isHandsFree: popup.autoApprovalEnabled
+        )
+
+        if popup.autoApprovalEnabled {
+            runApprovedStep(for: session)
+            return
+        }
 
         if step.actionKind == .wait {
             scheduleAdvance(after: 0.12)
         } else if !canObserveGlobalInput {
             observeVisibleProgress(for: session, baseline: snapshot)
+        }
+    }
+
+    /// Executes one already-presented step. The model never supplies an
+    /// executable selector: pointer actions are resolved once more from the
+    /// current local AX tree, and coordinate-only screenshot targets remain
+    /// visual-guide-only.
+    private func runApprovedStep(for session: GuideSession) {
+        guard guide?.id == session.id,
+              let step = session.currentStep,
+              popup.autoApprovalEnabled,
+              !isLoadingNextStep,
+              !isExecutingApprovedStep else { return }
+
+        guard canObserveGlobalInput else {
+            pauseGuide("Input Monitoring is required for hands-free work so Esc can stop it immediately.")
+            return
+        }
+        if let expected = session.targetApplicationIdentifier,
+           NSWorkspace.shared.frontmostApplication?.bundleIdentifier != expected {
+            pauseGuide("The target app is no longer in front, so I stopped before acting in the wrong app.")
+            return
+        }
+        if let reason = AutoApprovalPolicy.blockedReason(for: step, task: session.task) {
+            pauseGuide(reason)
+            return
+        }
+
+        let freshSnapshot = captureSnapshot()
+        let resolvedTarget: GuideResolvedTarget?
+        switch step.actionKind {
+        case .click, .type:
+            guard let target = freshSnapshot?.resolve(step) else {
+                requestPlan(for: session, mode: .replan)
+                return
+            }
+            resolvedTarget = target
+        case .scroll:
+            resolvedTarget = freshSnapshot?.resolve(step)
+        case .shortcut, .wait, .done, .unknown:
+            resolvedTarget = nil
+        }
+
+        if let resolvedTarget {
+            session.currentSnapshot = freshSnapshot
+            session.targetOnScreen = resolvedTarget.point
+            session.targetBoundsOnScreen = resolvedTarget.bounds
+            session.currentTargetGuard = resolvedTarget.guardToken
+            session.currentSnapshotRevision = freshSnapshot?.revision
+            overlay.present(
+                caption: "Jev · \(session.nextStepIndex + 1)/\(session.steps.count) · \(step.trimmedCaption)",
+                at: resolvedTarget.point
+            )
+        }
+
+        isExecutingApprovedStep = true
+        cursor.perform(step, target: resolvedTarget) { [weak self] (result: ApprovedActionResult) in
+            guard let self, self.guide?.id == session.id else { return }
+            self.isExecutingApprovedStep = false
+            switch result {
+            case .success:
+                self.advanceCurrentStep()
+            case .blocked(let reason):
+                self.pauseGuide(reason)
+            case .failed(let reason):
+                if session.replanCount < 2 {
+                    self.popup.status.stringValue = "Checking the current screen again…"
+                    self.requestPlan(for: session, mode: .replan)
+                } else {
+                    self.pauseGuide(reason)
+                }
+            }
         }
     }
 
@@ -672,8 +955,15 @@ final class JevApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func handleGuideInput(_ event: NSEvent) {
         guard let session = guide,
-              let step = session.currentStep,
-              !isLoadingNextStep else { return }
+              let step = session.currentStep else { return }
+
+        // When Jev has keyboard focus in another app, Input Monitoring gives
+        // the person an immediate system-wide stop key for a hands-free run.
+        if event.type == .keyDown, event.keyCode == 53, isExecutingApprovedStep {
+            cancelGuide(showPrompt: true)
+            return
+        }
+        guard !isLoadingNextStep, !isExecutingApprovedStep else { return }
 
         if isManualAdvance(event) {
             advanceCurrentStep(force: true)
@@ -812,12 +1102,22 @@ final class JevApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
             pauseGuide("I could not confirm a visible change after two attempts. The task is paused instead of looping.")
             return
         }
+        if popup.autoApprovalEnabled {
+            popup.status.stringValue = "I did not see a change — retrying that approved step once."
+            overlay.present(caption: "No visible change — retrying once.", at: session.targetOnScreen)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
+                self?.runApprovedStep(for: session)
+            }
+            return
+        }
         let targetName = step.normalizedTargetText ?? "that marked control"
         overlay.present(caption: "I did not see a change — try \(targetName) once more.", at: session.targetOnScreen)
     }
 
     private func finishGuide(_ session: GuideSession, caption: String) {
         guard guide?.id == session.id else { return }
+        cursor.cancel()
+        isExecutingApprovedStep = false
         guide = nil
         isLoadingNextStep = false
         advancementWork?.cancel()
@@ -829,6 +1129,8 @@ final class JevApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func pauseGuide(_ message: String) {
+        cursor.cancel()
+        isExecutingApprovedStep = false
         guide = nil
         isLoadingNextStep = false
         advancementWork?.cancel()
@@ -842,6 +1144,8 @@ final class JevApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func failGuide(_ message: String) {
+        cursor.cancel()
+        isExecutingApprovedStep = false
         guide = nil
         isLoadingNextStep = false
         advancementWork?.cancel()
@@ -853,6 +1157,8 @@ final class JevApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func cancelGuide(showPrompt: Bool) {
+        cursor.cancel()
+        isExecutingApprovedStep = false
         guide = nil
         isLoadingNextStep = false
         advancementWork?.cancel()

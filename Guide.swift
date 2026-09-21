@@ -136,7 +136,7 @@ struct GuideStep: Decodable {
         guard let text else { return nil }
         let cleaned = text.unicodeScalars
             .filter { scalar in
-                scalar == "\n" || scalar == "\t" || !CharacterSet.controlCharacters.contains(scalar)
+                scalar.value == 10 || scalar.value == 9 || !CharacterSet.controlCharacters.contains(scalar)
             }
             .map(String.init)
             .joined()
@@ -149,7 +149,7 @@ struct GuideStep: Decodable {
         let cleaned = (keys ?? []).compactMap { raw -> String? in
             let key = raw.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
             guard !key.isEmpty, key.count <= 24,
-                  key.unicodeScalars.allSatisfy({ CharacterSet.alphanumerics.contains($0) || $0 == "-" }) else {
+                  key.unicodeScalars.allSatisfy({ CharacterSet.alphanumerics.contains($0) || $0.value == 45 }) else {
                 return nil
             }
             return key
@@ -283,6 +283,7 @@ final class GuideSession {
     var currentTargetGuard: String?
     var currentSnapshotRevision: String?
     var currentSnapshot: GuideDesktopSnapshot?
+    var targetApplicationIdentifier: String?
     var steps: [GuideStep] = []
     var nextStepIndex = 0
     var planSnapshotRevision: String?
