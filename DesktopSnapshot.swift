@@ -48,6 +48,14 @@ struct GuideDesktopSnapshot {
         AXIsProcessTrusted()
     }
 
+    /// A named, actionable control can ground a plan without a full desktop
+    /// image. Prefer this lightweight path whenever the target app exposes it.
+    var hasUsableControls: Bool {
+        elements.contains { element in
+            element.isActionable && element.point != nil && !element.name.isEmpty
+        }
+    }
+
     static func capture(for application: NSRunningApplication?, fallbackName: String) -> GuideDesktopSnapshot? {
         guard AXIsProcessTrusted() else { return nil }
 
@@ -85,8 +93,32 @@ struct GuideDesktopSnapshot {
         )
     }
 
-    func compactJSON() -> String {
-        let rows = Array(elements.filter { !$0.name.isEmpty }.prefix(180).map(\.compact))
+    /// Large Electron apps can expose hundreds of Accessibility nodes. Rank a
+    /// compact context around the person's task so request encoding, upload,
+    /// and model input work do not delay the first visible instruction.
+    func compactJSON(relevantTo task: String, maximumElements: Int = 84) -> String {
+        let taskWords = Self.meaningfulWords(in: task)
+        let ranked = elements.enumerated().compactMap { index, element -> (score: Int, index: Int, element: GuideDesktopElement)? in
+            guard !element.name.isEmpty else { return nil }
+
+            let nameWords = Self.meaningfulWords(in: element.name)
+            var score = taskWords.intersection(nameWords).count * 120
+            if !taskWords.isEmpty && nameWords.isSuperset(of: taskWords) {
+                score += 280
+            }
+            if element.isActionable { score += 180 }
+            if element.point != nil { score += 50 }
+            if ["Button", "MenuItem", "MenuBarItem", "Tab", "Link", "CheckBox", "RadioButton", "PopUpButton"].contains(element.role) {
+                score += 35
+            }
+            return (score, index, element)
+        }
+        let rows = ranked
+            .sorted {
+                $0.score == $1.score ? $0.index < $1.index : $0.score > $1.score
+            }
+            .prefix(maximumElements)
+            .map(\.element.compact)
         guard JSONSerialization.isValidJSONObject(rows),
               let data = try? JSONSerialization.data(withJSONObject: rows, options: [.sortedKeys]),
               let json = String(data: data, encoding: .utf8) else {
@@ -161,7 +193,10 @@ struct GuideDesktopSnapshot {
         sequence: inout Int,
         depth: Int
     ) {
-        guard depth <= 18, elements.count < 900 else { return }
+        // AX calls are synchronous. Bound the initial inspection so a deeply
+        // nested window cannot make the prompt feel frozen before networking
+        // even begins.
+        guard depth <= 14, elements.count < 360 else { return }
         sequence += 1
 
         let role = stringAttribute(element, kAXRoleAttribute) ?? "AXUnknown"
@@ -200,7 +235,7 @@ struct GuideDesktopSnapshot {
 
         let children = (attribute(element, kAXChildrenAttribute) as? [AXUIElement]) ?? []
         for child in children {
-            guard elements.count < 900 else { break }
+            guard elements.count < 360 else { break }
             walk(child, elements: &elements, sequence: &sequence, depth: depth + 1)
         }
     }
@@ -290,6 +325,14 @@ struct GuideDesktopSnapshot {
             .components(separatedBy: CharacterSet.alphanumerics.inverted)
             .filter { !$0.isEmpty }
             .joined(separator: " ")
+    }
+
+    private static func meaningfulWords(in value: String) -> Set<String> {
+        let ignored: Set<String> = [
+            "a", "an", "and", "at", "do", "for", "from", "how", "i", "in", "is",
+            "it", "me", "my", "of", "on", "please", "the", "this", "to", "with"
+        ]
+        return Set(normalize(value).split(separator: " ").map(String.init)).subtracting(ignored)
     }
 
     private static func fingerprint(_ value: String) -> String {
