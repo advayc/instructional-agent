@@ -88,7 +88,11 @@ final class JevApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func rememberExternalApp(_ app: NSRunningApplication) {
-        guard app.bundleIdentifier != Bundle.main.bundleIdentifier else { return }
+        // TCC’s own accessibility alert is a helper process, not the app the
+        // person was working in. Keep the prior real target so Jev never
+        // labels a tutorial with this internal process name or its generic icon.
+        guard app.bundleIdentifier != Bundle.main.bundleIdentifier,
+              app.localizedName != "universalAccessAuthWarn" else { return }
         lastExternalApplication = app
         lastExternalAppName = app.localizedName ?? "macOS"
         popup.updateContext(lastExternalAppName, icon: app.icon)
@@ -160,6 +164,18 @@ final class JevApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func startGuide(task: String) {
+        // Do this before hiding the card. If macOS has associated the Privacy
+        // & Security switch with an older Jev signature, the old behavior hid
+        // the only UI and made a denied request look like the app had quit.
+        guard popup.canReadVisualGuideState else {
+            popup.showSetupIssue("Jev cannot see this Mac from the current install. Re-enable this Jev in Privacy & Security, then try again.")
+            popup.orderFrontRegardless()
+            NSApp.activate(ignoringOtherApps: true)
+            popup.makeKey()
+            popup.makeFirstResponder(popup.input)
+            return
+        }
+
         cancelGuide(showPrompt: false)
         let newGuide = GuideSession(task: task)
         guide = newGuide

@@ -67,6 +67,7 @@ SIGNING_IDENTITY="$(/bin/zsh "$DIR/setup-signing.sh")"
 /bin/chmod 600 "$SUPPORT_DIR/.env"
 /bin/rm -rf "$INSTALL_APP"
 /bin/mv "$STAGED_APP" "$INSTALL_APP"
+/usr/bin/codesign --verify --deep --strict --verbose=2 "$INSTALL_APP"
 /bin/rm -rf "$SOURCE_LINK"
 /bin/ln -s "$INSTALL_APP" "$SOURCE_LINK"
 # Desktop File Provider metadata can invalidate a code signature after the

@@ -59,8 +59,11 @@ Keychain-backed or server-side credential flow first.
 
 ## Permissions
 
-- **Screen Recording** — lets Jev use a visual snapshot. The app falls back to
-  local Accessibility controls when screen capture is temporarily unavailable.
+- **Screen Recording** — lets Jev use a visual snapshot. The app only checks
+  this permission while starting a guide; it never repeatedly summons a macOS
+  permission sheet when the system has a stale approval record. It falls back
+  to local Accessibility controls when screen capture is temporarily
+  unavailable.
 - **Accessibility** — enables that local fallback and makes cursor targets more
   reliable in native and Electron apps.
 - **Input Monitoring** — lets it notice your click, typing, or scroll and move
@@ -68,7 +71,7 @@ Keychain-backed or server-side credential flow first.
 
 The build signs the entire Jev bundle, installs it in `~/Applications`, then
 launches it through macOS so privacy approval applies to Jev rather than a bare
-terminal process. A valid Apple Development or Developer ID identity keeps that
-approval stable across rebuilds without Xcode. If your certificate expires, the
-build uses an ad-hoc signature and macOS may need one fresh approval after a
-rebuild.
+terminal process. It uses a valid Apple Development / Developer ID identity
+when available; otherwise it creates one user-local development identity in the
+login keychain. That keeps its privacy identity stable across rebuilds instead
+of falling back to an ad-hoc signature that macOS sees as a new app each time.

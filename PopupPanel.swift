@@ -140,6 +140,19 @@ final class PopupPanel: NSPanel {
         status.stringValue = message
     }
 
+    /// Leave the person's task in place when macOS has detached this build
+    /// from its privacy grant. This is a recoverable setup problem, not a
+    /// reason for the prompt to appear to vanish.
+    func showSetupIssue(_ message: String) {
+        input.isEnabled = true
+        pasteButton.isEnabled = true
+        status.stringValue = message
+    }
+
+    var canReadVisualGuideState: Bool {
+        hasScreenRecordingAccess() || GuideDesktopSnapshot.accessibilityIsAvailable
+    }
+
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
 
@@ -272,13 +285,12 @@ final class PopupPanel: NSPanel {
 
     private func hasScreenRecordingAccess() -> Bool {
         guard #available(macOS 10.15, *) else { return true }
-        if CGPreflightScreenCaptureAccess() {
-            return true
-        }
-        // This asks for permission for Jev itself, rather than relying on a
-        // separate command-line tool with its own TCC identity.
-        _ = CGRequestScreenCaptureAccess()
-        return false
+        // Keep this a pure status check. Calling CGRequestScreenCaptureAccess
+        // every time someone submits a task causes macOS to repeatedly put its
+        // modal permission sheet in front of Jev when an old TCC record no
+        // longer matches the current signed bundle. The guide can still use
+        // the local Accessibility snapshot when it is available.
+        return CGPreflightScreenCaptureAccess()
     }
 
     /// A compact local-only fingerprint for the passive tutorial fallback. It
