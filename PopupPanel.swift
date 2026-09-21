@@ -140,6 +140,12 @@ final class PopupPanel: NSPanel {
         status.stringValue = "Finding the first visible control…"
     }
 
+    func preparingAction() {
+        input.isEnabled = false
+        pasteButton.isEnabled = false
+        status.stringValue = "Doing that now…"
+    }
+
     func reset(message: String = "Jev will guide you on screen, one action at a time.") {
         input.stringValue = ""
         input.isEnabled = true
@@ -266,7 +272,7 @@ final class PopupPanel: NSPanel {
             """
             let completed = completedCaptions.isEmpty ? "None yet." : completedCaptions.joined(separator: " → ")
             let verificationText = verification.isEmpty ? "Define visible success criteria for this task." : verification.joined(separator: " | ")
-            let snapshotText = snapshot?.compactJSON() ?? "[]"
+            let snapshotText = snapshot?.compactJSON(relevantTo: task) ?? "[]"
             let context = """
             Planning mode: \(mode.promptLabel)
             Requested task: \(task)
@@ -402,19 +408,27 @@ final class PopupPanel: NSPanel {
         request.timeoutInterval = 22
         request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
-        // Streaming cuts TTFB vs buffered JSON; fallback handled in delegate.
-        var body: [String: Any] = ["model": model, "messages": messages, "stream": true, "temperature": 0.2]
-        // Keep payload minimal; gateway ignores unknown keys.
-        if body["stream"] == nil { body["stream"] = true }
-        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        request.httpBody = try? JSONSerialization.data(withJSONObject: [
+            "model": model,
+            "messages": messages,
+            "temperature": 0.2,
+            "reasoning_effort": "minimal",
+            "response_format": ["type": "json_object"]
+        ])
 
-        let delegate = ChatStreamDelegate(done: done)
-        let session = URLSession(configuration: .default, delegate: delegate, delegateQueue: nil)
-        let task = session.dataTask(with: request)
-        delegate.task = task
-        delegate.session = session
-        task.resume()
+        // A guide cannot be used until its JSON object is complete. Buffering
+        // avoids duplicating SSE chunks while preserving the same model route.
+        URLSession.shared.dataTask(with: request) { data, response, _ in
+            var text = "request failed (\((response as? HTTPURLResponse)?.statusCode ?? 0))"
+            if let data,
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let choices = json["choices"] as? [[String: Any]],
+               let message = choices.first?["message"] as? [String: Any],
+               let content = message["content"] as? String {
+                text = content
+            }
+            DispatchQueue.main.async { done(text) }
+        }.resume()
     }
 }
 
@@ -436,100 +450,5 @@ private final class WindowDragHandleView: NSView {
             if point.y > frame.height - titleBarHeight { return nil }
         }
         return self
-    }
-}
-
-private final class ChatStreamDelegate: NSObject, URLSessionDataDelegate, @unchecked Sendable {
-    var task: URLSessionDataTask?
-    var session: URLSession?
-    let done: (String) -> Void
-    private var buffer = Data()
-    private var text = ""
-    private var didFinish = false
-
-    init(done: @escaping (String) -> Void) { self.done = done }
-
-    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
-        buffer.append(data)
-        parseBuffer()
-    }
-
-    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        // If server ignored stream flag, buffer contains plain JSON; handle fallback.
-        if !didFinish {
-            finish()
-        }
-        session.finishTasksAndInvalidate()
-    }
-
-    private func parseBuffer() {
-        guard let string = String(data: buffer, encoding: .utf8) else { return }
-        // Stream is SSE: lines starting with "data: "
-        let lines = string.components(separatedBy: "\n")
-        var newText = text
-        var foundDone = false
-        for line in lines {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed == "data: [DONE]" {
-                foundDone = true
-                break
-            }
-            guard trimmed.hasPrefix("data: ") else { continue }
-            let jsonPart = String(trimmed.dropFirst(6))
-            guard let jsonData = jsonPart.data(using: .utf8),
-                  let obj = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
-                  let choices = obj["choices"] as? [[String: Any]],
-                  let first = choices.first else {
-                // Not streaming JSON, maybe complete buffered response
-                continue
-            }
-            if let delta = first["delta"] as? [String: Any], let content = delta["content"] as? String {
-                newText += content
-            } else if let message = first["message"] as? [String: Any], let content = message["content"] as? String {
-                newText = content
-            } else if let txt = first["text"] as? String {
-                newText += txt
-            }
-        }
-        // If no SSE delta found but buffer looks like full JSON, try one-shot parse
-        if newText == text, !string.contains("data:") {
-            if let json = try? JSONSerialization.jsonObject(with: buffer) as? [String: Any],
-               let choices = json["choices"] as? [[String: Any]],
-               let message = choices.first?["message"] as? [String: Any],
-               let content = message["content"] as? String {
-                newText = content
-                foundDone = true
-            }
-        }
-        text = newText
-        if foundDone {
-            didFinish = true
-            let final = text
-            DispatchQueue.main.async { [done] in done(final.isEmpty ? "request failed (empty)" : final) }
-        }
-    }
-
-    private func finish() {
-        parseBuffer()
-        // If still no SSE DONE but we have text, finish anyway to avoid hang.
-        if didFinish { return }
-        didFinish = true
-        let fallback: String
-        if !text.isEmpty {
-            fallback = text
-        } else if let raw = String(data: buffer, encoding: .utf8), !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            // Try extract message if server returned non-stream JSON late
-            if let json = try? JSONSerialization.jsonObject(with: buffer) as? [String: Any],
-               let choices = json["choices"] as? [[String: Any]],
-               let message = choices.first?["message"] as? [String: Any],
-               let content = message["content"] as? String, !content.isEmpty {
-                fallback = content
-            } else {
-                fallback = raw
-            }
-        } else {
-            fallback = "request failed"
-        }
-        DispatchQueue.main.async { [done] in done(fallback) }
     }
 }

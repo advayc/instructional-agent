@@ -19,6 +19,11 @@ locally and moves on without another remote round trip after every click. It
 uses a short UI-settle check after each action, verifies the visible end state,
 and pauses instead of endlessly repeating an unconfirmed instruction.
 
+Safe native actions bypass vision and run immediately. Jev currently handles
+dark mode, light mode, mute, unmute, and volume levels such as `volume 40`.
+Other requests continue through the visual guide; model output never becomes
+shell code.
+
 If it cannot observe an action, press Option-Right Arrow to advance manually.
 Escape stops the guide, and double-Command toggles Jev.
 

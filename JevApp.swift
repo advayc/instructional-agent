@@ -160,7 +160,69 @@ final class JevApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc func send(_ sender: NSTextField) {
         let task = sender.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !task.isEmpty else { return }
+        if performNativeAction(task) { return }
         startGuide(task: task)
+    }
+
+    /// Fast path for safe, reversible macOS actions. Unknown requests keep
+    /// using the visual guide instead of allowing model-generated shell code.
+    private func performNativeAction(_ task: String) -> Bool {
+        let normalized = task.lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        guard !normalized.contains("do not"), !normalized.contains("don t") else { return false }
+
+        let script: String
+        let completion: String
+        if normalized.contains("dark mode") {
+            let enable = !normalized.contains("turn off dark mode") && !normalized.contains("disable dark mode")
+            script = "tell application \"System Events\" to tell appearance preferences to set dark mode to \(enable)"
+            completion = enable ? "Dark mode is on." : "Light mode is on."
+        } else if normalized.contains("light mode") {
+            let dark = normalized.contains("turn off light mode") || normalized.contains("disable light mode")
+            script = "tell application \"System Events\" to tell appearance preferences to set dark mode to \(dark)"
+            completion = dark ? "Dark mode is on." : "Light mode is on."
+        } else if normalized == "unmute" || normalized.contains("unmute volume") || normalized.contains("unmute sound") {
+            script = "set volume without output muted"
+            completion = "Sound is unmuted."
+        } else if normalized == "mute" || normalized.contains("mute volume") || normalized.contains("mute sound") {
+            script = "set volume with output muted"
+            completion = "Sound is muted."
+        } else if let level = requestedVolume(in: normalized) {
+            script = "set volume output volume \(level) without output muted"
+            completion = "Volume is \(level)%."
+        } else {
+            return false
+        }
+
+        popup.preparingAction()
+        DispatchQueue.global(qos: .userInteractive).async { [weak self] in
+            var error: NSDictionary?
+            let succeeded = NSAppleScript(source: script)?.executeAndReturnError(&error) != nil
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if succeeded {
+                    self.popup.reset(message: completion)
+                    self.overlay.showCompletion(completion)
+                } else {
+                    let reason = error?[NSAppleScript.errorMessage] as? String ?? "macOS rejected the action."
+                    self.popup.showSetupIssue(reason)
+                }
+                self.popup.orderFrontRegardless()
+                NSApp.activate(ignoringOtherApps: true)
+                self.popup.makeKey()
+                self.popup.makeFirstResponder(self.popup.input)
+            }
+        }
+        return true
+    }
+
+    private func requestedVolume(in task: String) -> Int? {
+        guard task.contains("volume"),
+              let match = task.range(of: #"\b\d{1,3}\b"#, options: .regularExpression),
+              let level = Int(task[match]) else { return nil }
+        return min(100, level)
     }
 
     private func startGuide(task: String) {
