@@ -2,6 +2,8 @@
 
 Answers, acts, and guides on-screen with a live cursor.
 
+![Jev popup](Assets/popup.png)
+
 ```sh
 ./run.sh "question"  # CLI
 ./build-app.sh       # rebuild + launch
@@ -9,6 +11,18 @@ open Jev.app         # UI, double-Cmd toggles
 ```
 
 Option-Right advances guide, Escape stops.
+
+Things you can say:
+
+Instant — `turn on Do Not Disturb`, `dark mode`, `volume 40`, `mute`,
+`set a 5 min timer`, `open Spotify`.
+
+Does it — `play SICKO MODE by Travis Scott on Spotify`.
+
+Shows you, in the right app — `turn on Wi-Fi`, `change my wallpaper`,
+`create a calendar event`, anything naming an app.
+
+Answers as text — `what's sequestration?`, `explain ...`, `write ...`
 
 Click **Approve for me** in the prompt to let Jev complete routine, visible
 steps itself (click, type, shortcut, scroll, and verify). It stays off by
