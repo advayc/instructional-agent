@@ -28,6 +28,7 @@ cursor.
 - `PopupPanel.swift` — compact task prompt, screenshot request, and grounded next-step API call.
 - `OverlayWindow.swift` — click-through transparent virtual cursor and animated caption.
 - `jev.swift` — separate text-only CLI core.
+- `setup-signing.sh` — locates the stable local signing identity used to retain macOS permissions across rebuilds.
 - `build-app.sh`, `main.swift`, `Jev.app`, `.env` (ignored keys).
 
 The UI is plain AppKit compiled with `swiftc`; it uses neither SwiftUI nor
@@ -51,3 +52,8 @@ use a Keychain-backed or server-side credential flow first.
 - **Screen Recording** — lets Jev identify the currently visible control.
 - **Input Monitoring** — lets it notice your click, typing, or scroll and move
   to the next guide step. The app still cannot and does not send input for you.
+
+The build signs Jev with an existing Apple Development or Developer ID identity
+from your login keychain. That gives the app a stable macOS privacy identity
+across rebuilds without requiring Xcode. After the next launch, approve the
+fresh Screen Recording prompt for Jev once and restart the app.

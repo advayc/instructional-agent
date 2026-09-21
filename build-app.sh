@@ -28,7 +28,11 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 </dict>
 </plist>
 PLIST
+SIGNING_IDENTITY="$(/bin/zsh "$DIR/setup-signing.sh")"
+/usr/bin/xattr -cr "$APP"
+/usr/bin/codesign --force --sign "$SIGNING_IDENTITY" --identifier "dev.jev.app" "$APP/Contents/MacOS/jev-ui"
+/usr/bin/codesign --verify --strict --verbose=2 "$APP/Contents/MacOS/jev-ui"
 echo "built $APP"
 pkill -x jev-ui 2>/dev/null || true
 sleep 1
-open "$APP"
+"$APP/Contents/MacOS/jev-ui" &
