@@ -187,7 +187,7 @@ final class JevApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Let the previous app become frontmost before taking the first live AX
         // snapshot or screen capture. This avoids the guide pointing at Jev's
         // own task field instead of the app the person wanted help with.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.10) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.03) { [weak self] in
             self?.requestPlan(for: newGuide, mode: .initial)
         }
     }
@@ -300,7 +300,7 @@ final class JevApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
         overlay.present(caption: step.trimmedCaption, at: session.targetOnScreen)
 
         if step.actionKind == .wait {
-            scheduleAdvance(after: 0.18)
+            scheduleAdvance(after: 0.12)
         } else if !canObserveGlobalInput {
             observeVisibleProgress(for: session, baseline: snapshot)
         }
@@ -343,7 +343,7 @@ final class JevApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
         }
         passiveObservationWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.16, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.10, execute: work)
     }
 
     private func pollVisualProgress(for session: GuideSession, baseline: String, started: Date) {
@@ -367,7 +367,7 @@ final class JevApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
         }
         passiveObservationWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.22, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.14, execute: work)
     }
 
     private func continuePassiveObservation(
@@ -415,18 +415,18 @@ final class JevApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
         switch step.actionKind {
         case .click:
             guard event.type == .leftMouseDown, isMouseNearCurrentTarget(event, session: session) else { return }
-            scheduleAdvance(after: 0.08)
+            scheduleAdvance(after: 0.04)
         case .type:
             guard event.type == .keyDown else { return }
             // Reset after every keypress, then move on quickly once the person
             // pauses. This keeps a phrase as one tutorial action.
-            scheduleAdvance(after: 0.34)
+            scheduleAdvance(after: 0.22)
         case .shortcut:
             guard event.type == .keyDown else { return }
-            scheduleAdvance(after: 0.10)
+            scheduleAdvance(after: 0.06)
         case .scroll:
             guard event.type == .scrollWheel else { return }
-            scheduleAdvance(after: 0.12)
+            scheduleAdvance(after: 0.08)
         case .wait, .done, .unknown:
             break
         }
@@ -488,7 +488,7 @@ final class JevApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
             session.targetBoundsOnScreen = nil
             session.currentTargetGuard = nil
             session.currentSnapshotRevision = snapshot?.revision
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.025) { [weak self] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.015) { [weak self] in
                 self?.presentNextPlannedStep(for: session)
             }
         }
@@ -511,8 +511,8 @@ final class JevApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
         session: GuideSession,
         completion: @escaping (GuideDesktopSnapshot?) -> Void
     ) {
-        let minimum: TimeInterval = step.actionKind == .type ? 0.30 : 0.12
-        let timeout: TimeInterval = step.actionKind == .type ? 0.78 : 0.44
+        let minimum: TimeInterval = step.actionKind == .type ? 0.18 : 0.06
+        let timeout: TimeInterval = step.actionKind == .type ? 0.48 : 0.26
         let started = Date()
         var latest: GuideDesktopSnapshot?
         var lastRevision: String?
@@ -531,11 +531,11 @@ final class JevApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if elapsed >= minimum && (stableFrames >= 1 || elapsed >= timeout) {
                 completion(latest)
             } else {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.055, execute: poll)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.035, execute: poll)
             }
         }
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.055, execute: poll)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.035, execute: poll)
     }
 
     private func handleNoProgress(for session: GuideSession, step: GuideStep) {

@@ -25,6 +25,7 @@ final class PopupPanel: NSPanel {
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         titleVisibility = .hidden
         titlebarAppearsTransparent = true
+        isMovable = true
         isMovableByWindowBackground = true
         backgroundColor = .clear
         isOpaque = false
@@ -41,6 +42,12 @@ final class PopupPanel: NSPanel {
         effect.material = .popover
         effect.state = .active
         cv.addSubview(effect)
+
+        // Invisible drag handle across header so window moves even when
+        // click lands on empty labels; labels remain visible on top.
+        let headerDrag = WindowDragHandleView(frame: NSRect(x: 0, y: 132, width: 640, height: 100))
+        headerDrag.autoresizingMask = [.width, .minYMargin]
+        cv.addSubview(headerDrag)
 
         appIcon.image = NSImage(named: "Jev") ?? NSImage(named: NSImage.applicationIconName)
         appIcon.imageScaling = .scaleProportionallyUpOrDown
@@ -242,7 +249,7 @@ final class PopupPanel: NSPanel {
     ) {
         // Capture and API work stay off the main run loop. The normal path sends
         // one bounded plan, then advances locally through live AX targets.
-        DispatchQueue.global(qos: .userInitiated).async {
+        DispatchQueue.global(qos: .userInteractive).async {
             let system = """
             You are Jev's fast, on-screen macOS guide. The person controls the Mac; you never claim to click, type, or complete work yourself.
 
@@ -345,7 +352,7 @@ final class PopupPanel: NSPanel {
     /// preserving readable controls for a planning call.
     private func scaledJPEGBase64(from image: CGImage) -> String? {
         let sourceSize = NSSize(width: image.width, height: image.height)
-        let maxEdge: CGFloat = 1_440
+        let maxEdge: CGFloat = 960
         let scale = min(1, maxEdge / max(sourceSize.width, sourceSize.height))
         let pixelsWide = max(1, Int((sourceSize.width * scale).rounded()))
         let pixelsHigh = max(1, Int((sourceSize.height * scale).rounded()))
@@ -366,7 +373,7 @@ final class PopupPanel: NSPanel {
         }
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = context
-        context.imageInterpolation = .medium
+        context.imageInterpolation = .low
         NSImage(cgImage: image, size: sourceSize).draw(
             in: NSRect(origin: .zero, size: NSSize(width: pixelsWide, height: pixelsHigh)),
             from: NSRect(origin: .zero, size: sourceSize),
@@ -374,7 +381,7 @@ final class PopupPanel: NSPanel {
             fraction: 1
         )
         NSGraphicsContext.restoreGraphicsState()
-        let properties: [NSBitmapImageRep.PropertyKey: Any] = [.compressionFactor: 0.62]
+        let properties: [NSBitmapImageRep.PropertyKey: Any] = [.compressionFactor: 0.52]
         return bitmap.representation(using: .jpeg, properties: properties)?.base64EncodedString()
     }
 
@@ -392,21 +399,137 @@ final class PopupPanel: NSPanel {
         let url = URL(string: "https://ai-gateway.vercel.sh/v1/chat/completions")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.timeoutInterval = 14
+        request.timeoutInterval = 22
         request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try? JSONSerialization.data(withJSONObject: ["model": model, "messages": messages])
+        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        // Streaming cuts TTFB vs buffered JSON; fallback handled in delegate.
+        var body: [String: Any] = ["model": model, "messages": messages, "stream": true, "temperature": 0.2]
+        // Keep payload minimal; gateway ignores unknown keys.
+        if body["stream"] == nil { body["stream"] = true }
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
-        URLSession.shared.dataTask(with: request) { data, response, _ in
-            var text = "request failed (\((response as? HTTPURLResponse)?.statusCode ?? 0))"
-            if let data,
-               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+        let delegate = ChatStreamDelegate(done: done)
+        let session = URLSession(configuration: .default, delegate: delegate, delegateQueue: nil)
+        let task = session.dataTask(with: request)
+        delegate.task = task
+        delegate.session = session
+        task.resume()
+    }
+}
+
+private final class WindowDragHandleView: NSView {
+    var dragAt = NSZeroPoint
+    override func mouseDown(with event: NSEvent) {
+        dragAt = event.locationInWindow
+    }
+    override func mouseDragged(with event: NSEvent) {
+        guard let window else { return }
+        var f = window.frame
+        f.origin.x += event.locationInWindow.x - dragAt.x
+        f.origin.y += event.locationInWindow.y - dragAt.y
+        window.setFrame(f, display: true)
+    }
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        if let window, let frame = window.contentView?.frame {
+            let titleBarHeight: CGFloat = 28
+            if point.y > frame.height - titleBarHeight { return nil }
+        }
+        return self
+    }
+}
+
+private final class ChatStreamDelegate: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+    var task: URLSessionDataTask?
+    var session: URLSession?
+    let done: (String) -> Void
+    private var buffer = Data()
+    private var text = ""
+    private var didFinish = false
+
+    init(done: @escaping (String) -> Void) { self.done = done }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        buffer.append(data)
+        parseBuffer()
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        // If server ignored stream flag, buffer contains plain JSON; handle fallback.
+        if !didFinish {
+            finish()
+        }
+        session.finishTasksAndInvalidate()
+    }
+
+    private func parseBuffer() {
+        guard let string = String(data: buffer, encoding: .utf8) else { return }
+        // Stream is SSE: lines starting with "data: "
+        let lines = string.components(separatedBy: "\n")
+        var newText = text
+        var foundDone = false
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed == "data: [DONE]" {
+                foundDone = true
+                break
+            }
+            guard trimmed.hasPrefix("data: ") else { continue }
+            let jsonPart = String(trimmed.dropFirst(6))
+            guard let jsonData = jsonPart.data(using: .utf8),
+                  let obj = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+                  let choices = obj["choices"] as? [[String: Any]],
+                  let first = choices.first else {
+                // Not streaming JSON, maybe complete buffered response
+                continue
+            }
+            if let delta = first["delta"] as? [String: Any], let content = delta["content"] as? String {
+                newText += content
+            } else if let message = first["message"] as? [String: Any], let content = message["content"] as? String {
+                newText = content
+            } else if let txt = first["text"] as? String {
+                newText += txt
+            }
+        }
+        // If no SSE delta found but buffer looks like full JSON, try one-shot parse
+        if newText == text, !string.contains("data:") {
+            if let json = try? JSONSerialization.jsonObject(with: buffer) as? [String: Any],
                let choices = json["choices"] as? [[String: Any]],
                let message = choices.first?["message"] as? [String: Any],
                let content = message["content"] as? String {
-                text = content
+                newText = content
+                foundDone = true
             }
-            DispatchQueue.main.async { done(text) }
-        }.resume()
+        }
+        text = newText
+        if foundDone {
+            didFinish = true
+            let final = text
+            DispatchQueue.main.async { [done] in done(final.isEmpty ? "request failed (empty)" : final) }
+        }
+    }
+
+    private func finish() {
+        parseBuffer()
+        // If still no SSE DONE but we have text, finish anyway to avoid hang.
+        if didFinish { return }
+        didFinish = true
+        let fallback: String
+        if !text.isEmpty {
+            fallback = text
+        } else if let raw = String(data: buffer, encoding: .utf8), !raw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            // Try extract message if server returned non-stream JSON late
+            if let json = try? JSONSerialization.jsonObject(with: buffer) as? [String: Any],
+               let choices = json["choices"] as? [[String: Any]],
+               let message = choices.first?["message"] as? [String: Any],
+               let content = message["content"] as? String, !content.isEmpty {
+                fallback = content
+            } else {
+                fallback = raw
+            }
+        } else {
+            fallback = "request failed"
+        }
+        DispatchQueue.main.async { [done] in done(fallback) }
     }
 }
