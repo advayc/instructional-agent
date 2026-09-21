@@ -6,12 +6,14 @@ INSTALL_APP="/Users/AdvayChandorkar/Applications/Jev.app"
 SUPPORT_DIR="/Users/AdvayChandorkar/Library/Application Support/Jev"
 STAGE_ROOT="$(/usr/bin/mktemp -d /private/tmp/jev-app-build.XXXXXX)"
 STAGED_APP="$STAGE_ROOT/Jev.app"
+MODULE_CACHE="$STAGE_ROOT/swift-module-cache"
 trap '/bin/rm -rf "$STAGE_ROOT"' EXIT
 set -a
 source "$DIR/.env"
 set +a
-swiftc -O "$DIR/jev.swift" -o "$DIR/jev"
-swiftc -O "$DIR/Guide.swift" "$DIR/DesktopSnapshot.swift" "$DIR/JevApp.swift" "$DIR/PopupPanel.swift" "$DIR/OverlayWindow.swift" "$DIR/main.swift" -o "$DIR/jev-ui"
+mkdir -p "$MODULE_CACHE"
+swiftc -O -module-cache-path "$MODULE_CACHE" "$DIR/jev.swift" -o "$DIR/jev"
+swiftc -O -module-cache-path "$MODULE_CACHE" "$DIR/Guide.swift" "$DIR/DesktopSnapshot.swift" "$DIR/Cursor.swift" "$DIR/JevApp.swift" "$DIR/PopupPanel.swift" "$DIR/OverlayWindow.swift" "$DIR/main.swift" -o "$DIR/jev-ui"
 mkdir -p "$STAGED_APP/Contents/MacOS" "$STAGED_APP/Contents/Resources"
 cp "$DIR/jev-ui" "$STAGED_APP/Contents/MacOS/jev-ui"
 ICONSET="$STAGE_ROOT/Jev.iconset"
