@@ -42,7 +42,8 @@ final class PopupPanel: NSPanel {
         effect.state = .active
         cv.addSubview(effect)
 
-        appIcon.image = NSImage(systemSymbolName: "location.north.line.fill", accessibilityDescription: "Jev")
+        appIcon.image = NSImage(named: "Jev") ?? NSImage(named: NSImage.applicationIconName)
+        appIcon.imageScaling = .scaleProportionallyUpOrDown
         appIcon.frame = NSRect(x: 34, y: 177, width: 23, height: 23)
         cv.addSubview(appIcon)
 
@@ -121,8 +122,9 @@ final class PopupPanel: NSPanel {
         ).cgColor
     }
 
-    func updateContext(_ appName: String) {
+    func updateContext(_ appName: String, icon: NSImage?) {
         context.stringValue = appName
+        appIcon.image = icon ?? NSImage(named: "Jev") ?? NSImage(named: NSImage.applicationIconName)
     }
 
     func preparingGuide() {
@@ -277,6 +279,39 @@ final class PopupPanel: NSPanel {
         // separate command-line tool with its own TCC identity.
         _ = CGRequestScreenCaptureAccess()
         return false
+    }
+
+    /// A compact local-only fingerprint for the passive tutorial fallback. It
+    /// lets the guide notice a person’s visible change when Input Monitoring is
+    /// unavailable, without asking the model to re-evaluate every frame.
+    func captureVisualFingerprint(done: @escaping (String?) -> Void) {
+        guard #available(macOS 14.0, *),
+              CGPreflightScreenCaptureAccess(),
+              let screen = NSScreen.main else {
+            done(nil)
+            return
+        }
+        let rect = NSRect(origin: .zero, size: screen.frame.size)
+        SCScreenshotManager.captureImage(in: rect) { image, _ in
+            done(image.flatMap(Self.visualFingerprint))
+        }
+    }
+
+    private static func visualFingerprint(_ image: CGImage) -> String? {
+        guard let data = image.dataProvider?.data,
+              let bytes = CFDataGetBytePtr(data) else { return nil }
+        let length = CFDataGetLength(data)
+        guard length > 0 else { return nil }
+
+        var hash: UInt64 = 14_695_981_039_346_656_037
+        let stride = max(4, length / 4_096)
+        var index = 0
+        while index < length {
+            hash ^= UInt64(bytes[index])
+            hash &*= 1_099_511_628_211
+            index += stride
+        }
+        return String(hash, radix: 16)
     }
 
     private func screenshot(done: @escaping (String?) -> Void) {

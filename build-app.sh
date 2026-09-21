@@ -14,6 +14,19 @@ swiftc -O "$DIR/jev.swift" -o "$DIR/jev"
 swiftc -O "$DIR/Guide.swift" "$DIR/DesktopSnapshot.swift" "$DIR/JevApp.swift" "$DIR/PopupPanel.swift" "$DIR/OverlayWindow.swift" "$DIR/main.swift" -o "$DIR/jev-ui"
 mkdir -p "$STAGED_APP/Contents/MacOS" "$STAGED_APP/Contents/Resources"
 cp "$DIR/jev-ui" "$STAGED_APP/Contents/MacOS/jev-ui"
+ICONSET="$STAGE_ROOT/Jev.iconset"
+mkdir -p "$ICONSET"
+/usr/bin/sips -z 16 16 "$DIR/Assets/JevIcon.png" --out "$ICONSET/icon_16x16.png" >/dev/null
+/usr/bin/sips -z 32 32 "$DIR/Assets/JevIcon.png" --out "$ICONSET/icon_16x16@2x.png" >/dev/null
+/usr/bin/sips -z 32 32 "$DIR/Assets/JevIcon.png" --out "$ICONSET/icon_32x32.png" >/dev/null
+/usr/bin/sips -z 64 64 "$DIR/Assets/JevIcon.png" --out "$ICONSET/icon_32x32@2x.png" >/dev/null
+/usr/bin/sips -z 128 128 "$DIR/Assets/JevIcon.png" --out "$ICONSET/icon_128x128.png" >/dev/null
+/usr/bin/sips -z 256 256 "$DIR/Assets/JevIcon.png" --out "$ICONSET/icon_128x128@2x.png" >/dev/null
+/usr/bin/sips -z 256 256 "$DIR/Assets/JevIcon.png" --out "$ICONSET/icon_256x256.png" >/dev/null
+/usr/bin/sips -z 512 512 "$DIR/Assets/JevIcon.png" --out "$ICONSET/icon_256x256@2x.png" >/dev/null
+/usr/bin/sips -z 512 512 "$DIR/Assets/JevIcon.png" --out "$ICONSET/icon_512x512.png" >/dev/null
+/usr/bin/sips -z 1024 1024 "$DIR/Assets/JevIcon.png" --out "$ICONSET/icon_512x512@2x.png" >/dev/null
+/usr/bin/iconutil -c icns "$ICONSET" -o "$STAGED_APP/Contents/Resources/Jev.icns"
 cat > "$STAGED_APP/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -23,12 +36,22 @@ cat > "$STAGED_APP/Contents/Info.plist" <<'PLIST'
 	<string>jev-ui</string>
 	<key>CFBundleIdentifier</key>
 	<string>dev.jev.app</string>
+	<key>CFBundleIconFile</key>
+	<string>Jev</string>
+	<key>CFBundleDisplayName</key>
+	<string>Jev</string>
 	<key>CFBundleName</key>
 	<string>Jev</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.2</string>
+	<key>CFBundleVersion</key>
+	<string>2</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>NSScreenCaptureUsageDescription</key>
+	<string>Jev reads a screenshot only to identify visible controls for the on-screen tutorial. It sends a screenshot to the configured guide model only while you request a guide.</string>
 </dict>
 </plist>
 PLIST

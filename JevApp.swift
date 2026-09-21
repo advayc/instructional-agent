@@ -10,12 +10,14 @@ final class JevApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var guide: GuideSession?
     private var isLoadingNextStep = false
     private var advancementWork: DispatchWorkItem?
+    private var passiveObservationWork: DispatchWorkItem?
     private var eventMonitors: [Any] = []
     private var workspaceObserver: NSObjectProtocol?
+    private var canObserveGlobalInput = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
-        NSApp.applicationIconImage = NSImage(systemSymbolName: "location.north.line.fill", accessibilityDescription: "Jev")
+        NSApp.applicationIconImage = NSImage(named: "Jev") ?? NSImage(named: NSImage.applicationIconName)
         installMenu()
         loadEnv()
         observeFrontmostApp()
@@ -89,6 +91,7 @@ final class JevApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard app.bundleIdentifier != Bundle.main.bundleIdentifier else { return }
         lastExternalApplication = app
         lastExternalAppName = app.localizedName ?? "macOS"
+        popup.updateContext(lastExternalAppName, icon: app.icon)
     }
 
     private func activateGuideTarget() {
@@ -105,6 +108,12 @@ final class JevApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self?.handleLocalKey(event) ?? event
         }
         if let local { eventMonitors.append(local) }
+
+        // Input Monitoring improves click-following, but Jev's visual guide
+        // must never be blocked by it. When unavailable, a screen/AX watcher
+        // advances only after visible progress instead of prompting again.
+        canObserveGlobalInput = hasInputMonitoringAccess()
+        guard canObserveGlobalInput else { return }
 
         let guideEvents = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .keyDown, .scrollWheel]) { [weak self] event in
             DispatchQueue.main.async {
@@ -151,13 +160,6 @@ final class JevApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func startGuide(task: String) {
-        guard requestInputMonitoringIfNeeded() else {
-            // CGRequestListenEventAccess presents the system prompt for this
-            // signed Jev app. Do not start a guide that cannot observe the
-            // person's actions; that would look like a stalled model loop.
-            showPrompt(message: "Input Monitoring is needed to follow your clicks. Enable Jev in the Apple prompt, then send the task again.")
-            return
-        }
         cancelGuide(showPrompt: false)
         let newGuide = GuideSession(task: task)
         guide = newGuide
@@ -174,13 +176,9 @@ final class JevApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    private func requestInputMonitoringIfNeeded() -> Bool {
+    private func hasInputMonitoringAccess() -> Bool {
         guard #available(macOS 10.15, *) else { return true }
-        if CGPreflightListenEventAccess() {
-            return true
-        }
-        _ = CGRequestListenEventAccess()
-        return false
+        return CGPreflightListenEventAccess()
     }
 
     private func requestPlan(for session: GuideSession, mode: GuidePlanningMode) {
@@ -287,7 +285,86 @@ final class JevApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         if step.actionKind == .wait {
             scheduleAdvance(after: 0.18)
+        } else if !canObserveGlobalInput {
+            observeVisibleProgress(for: session, baseline: snapshot)
         }
+    }
+
+    /// Fallback for the intentionally permission-light virtual cursor. With
+    /// no Input Monitoring grant, poll only the local AX tree (or a compact
+    /// screenshot fingerprint) until the person changes the target app.
+    private func observeVisibleProgress(for session: GuideSession, baseline: GuideDesktopSnapshot?) {
+        passiveObservationWork?.cancel()
+        passiveObservationWork = nil
+        let started = Date()
+
+        if let baselineRevision = baseline?.revision {
+            pollAccessibilityProgress(for: session, baseline: baselineRevision, started: started)
+        } else {
+            popup.captureVisualFingerprint { [weak self] fingerprint in
+                DispatchQueue.main.async {
+                    guard let self,
+                          self.guide?.id == session.id,
+                          self.guide?.currentStep != nil,
+                          let fingerprint else { return }
+                    self.pollVisualProgress(for: session, baseline: fingerprint, started: started)
+                }
+            }
+        }
+    }
+
+    private func pollAccessibilityProgress(for session: GuideSession, baseline: String, started: Date) {
+        let work = DispatchWorkItem { [weak self] in
+            guard let self,
+                  self.guide?.id == session.id,
+                  self.guide?.currentStep != nil else { return }
+            if let revision = self.captureSnapshot()?.revision, revision != baseline {
+                self.advanceCurrentStep(force: true)
+                return
+            }
+            self.continuePassiveObservation(for: session, started: started) {
+                self.pollAccessibilityProgress(for: session, baseline: baseline, started: started)
+            }
+        }
+        passiveObservationWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.16, execute: work)
+    }
+
+    private func pollVisualProgress(for session: GuideSession, baseline: String, started: Date) {
+        let work = DispatchWorkItem { [weak self] in
+            guard let self,
+                  self.guide?.id == session.id,
+                  self.guide?.currentStep != nil else { return }
+            self.popup.captureVisualFingerprint { [weak self] fingerprint in
+                DispatchQueue.main.async {
+                    guard let self,
+                          self.guide?.id == session.id,
+                          self.guide?.currentStep != nil else { return }
+                    if let fingerprint, fingerprint != baseline {
+                        self.advanceCurrentStep(force: true)
+                        return
+                    }
+                    self.continuePassiveObservation(for: session, started: started) {
+                        self.pollVisualProgress(for: session, baseline: baseline, started: started)
+                    }
+                }
+            }
+        }
+        passiveObservationWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.22, execute: work)
+    }
+
+    private func continuePassiveObservation(
+        for session: GuideSession,
+        started: Date,
+        next: @escaping () -> Void
+    ) {
+        guard Date().timeIntervalSince(started) < 40 else {
+            pauseGuide("I could not see a change after 40 seconds. The cursor is still usable, but enable Input Monitoring and reopen Jev if you want it to follow each click automatically.")
+            return
+        }
+        guard guide?.id == session.id, session.currentStep != nil else { return }
+        next()
     }
 
     private func canUseCoordinateFallback(
@@ -365,6 +442,8 @@ final class JevApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
               !isLoadingNextStep else { return }
         advancementWork?.cancel()
         advancementWork = nil
+        passiveObservationWork?.cancel()
+        passiveObservationWork = nil
         isLoadingNextStep = true
 
         let beforeRevision = session.currentSnapshotRevision
@@ -459,6 +538,8 @@ final class JevApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
         isLoadingNextStep = false
         advancementWork?.cancel()
         advancementWork = nil
+        passiveObservationWork?.cancel()
+        passiveObservationWork = nil
         overlay.showCompletion(caption)
         popup.reset()
     }
@@ -468,6 +549,8 @@ final class JevApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
         isLoadingNextStep = false
         advancementWork?.cancel()
         advancementWork = nil
+        passiveObservationWork?.cancel()
+        passiveObservationWork = nil
         overlay.showCompletion("Paused — \(message)")
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.55) { [weak self] in
             self?.showPrompt(message: message)
@@ -479,6 +562,8 @@ final class JevApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
         isLoadingNextStep = false
         advancementWork?.cancel()
         advancementWork = nil
+        passiveObservationWork?.cancel()
+        passiveObservationWork = nil
         overlay.dismiss()
         showPrompt(message: message)
     }
@@ -488,6 +573,8 @@ final class JevApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
         isLoadingNextStep = false
         advancementWork?.cancel()
         advancementWork = nil
+        passiveObservationWork?.cancel()
+        passiveObservationWork = nil
         overlay.dismiss()
         popup.reset()
         if showPrompt {
@@ -507,7 +594,7 @@ final class JevApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if let message {
             popup.reset(message: message)
         }
-        popup.updateContext(lastExternalAppName)
+        popup.updateContext(lastExternalAppName, icon: lastExternalApplication?.icon)
         popup.orderFrontRegardless()
         NSApp.activate(ignoringOtherApps: true)
         popup.makeKey()
