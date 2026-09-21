@@ -172,7 +172,13 @@ final class JevApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
         popup.preparingAnswer()
         popup.orderFrontRegardless()
         NSApp.activate(ignoringOtherApps: true)
-        popup.requestAnswer(task: task, frontmostApp: lastExternalAppName) { [weak self] result in
+        popup.requestAnswer(
+            task: task,
+            frontmostApp: lastExternalAppName,
+            progress: { [weak self] text in
+                self?.popup.showAnswerProgress(text)
+            }
+        ) { [weak self] result in
             guard let self else { return }
             switch result {
             case .success(let text):

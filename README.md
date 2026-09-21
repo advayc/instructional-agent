@@ -30,7 +30,7 @@ Three paths, in order:
 1. **Instant native** — dark/light mode, mute/unmute, `volume 40`,
    `set a 5 min timer`, `open Safari`. Runs immediately, no vision needed.
 2. **Direct answer** — general questions (`what…?`, `explain…`, `write…`)
-   answered as text in the popup, never as clicks inside a random app.
+   stream into the popup as text arrives, never as clicks inside a random app.
 3. **Routed guide** — everything else opens/guides in the right app
    (Clock for alarms, Reminders for todos, System Settings for Wi-Fi/
    wallpaper/Focus, Mail/Calendar/Notes when named). A `5 min timer` no

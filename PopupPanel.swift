@@ -174,6 +174,11 @@ final class PopupPanel: NSPanel {
         status.stringValue = String(clean.prefix(280))
     }
 
+    func showAnswerProgress(_ text: String) {
+        let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        status.stringValue = String(clean.prefix(280))
+    }
+
     func reset(message: String = "Jev will guide you on screen, one action at a time.") {
         input.stringValue = ""
         input.isEnabled = true
@@ -434,13 +439,17 @@ final class PopupPanel: NSPanel {
     func requestAnswer(
         task: String,
         frontmostApp: String,
+        progress: @escaping (String) -> Void,
         done: @escaping (Result<String, GuideRequestError>) -> Void
     ) {
         DispatchQueue.global(qos: .userInteractive).async {
             let system = """
             You are jev, a fast macOS assistant. User is on a Mac, frontmost app is \(frontmostApp). Assume macOS always, never ask which OS. Answer short and actionable: exact menu paths, keys, clicks when relevant. No fluff. Keep under 280 characters, plain text, no markdown headers.
             """
-            self.post([["role": "system", "content": system], ["role": "user", "content": task]]) { response in
+            self.postTextStream(
+                [["role": "system", "content": system], ["role": "user", "content": task]],
+                progress: progress
+            ) { response in
                 let clean = response.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !clean.isEmpty, !clean.lowercased().hasPrefix("request failed"), clean != "missing API key" else {
                     done(.failure(GuideRequestError(message: "Jev could not get an answer. Check connection and try again.")))
@@ -468,13 +477,14 @@ final class PopupPanel: NSPanel {
         request.timeoutInterval = 22
         request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try? JSONSerialization.data(withJSONObject: [
+        let body: [String: Any] = [
             "model": model,
             "messages": messages,
             "temperature": 0.2,
             "reasoning_effort": "minimal",
             "response_format": ["type": "json_object"]
-        ])
+        ]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
         // A guide cannot be used until its JSON object is complete. Buffering
         // avoids duplicating SSE chunks while preserving the same model route.
@@ -489,6 +499,45 @@ final class PopupPanel: NSPanel {
             }
             DispatchQueue.main.async { done(text) }
         }.resume()
+    }
+
+    /// Text answers can be shown as tokens arrive. Guide plans deliberately
+    /// stay on the buffered JSON path above, because a partial plan must never
+    /// control which on-screen target Jev highlights.
+    private func postTextStream(
+        _ messages: [[String: Any]],
+        progress: @escaping (String) -> Void,
+        done: @escaping (String) -> Void
+    ) {
+        let environment = ProcessInfo.processInfo.environment
+        let key = environment["AI_GATEWAY_API_KEY"].flatMap { $0.isEmpty ? nil : $0 }
+            ?? environment["AI_GATEWAY_API_KEY_BACKUP"]
+            ?? ""
+        guard !key.isEmpty else {
+            DispatchQueue.main.async { done("missing API key") }
+            return
+        }
+
+        let model = environment["AI_GATEWAY_MODEL"] ?? "vmc/jev"
+        let url = URL(string: "https://ai-gateway.vercel.sh/v1/chat/completions")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 22
+        request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        request.httpBody = try? JSONSerialization.data(withJSONObject: [
+            "model": model,
+            "messages": messages,
+            "temperature": 0.2,
+            "reasoning_effort": "minimal",
+            "stream": true
+        ])
+
+        let delegate = TextStreamDelegate(progress: progress, done: done)
+        let session = URLSession(configuration: .default, delegate: delegate, delegateQueue: nil)
+        delegate.session = session
+        session.dataTask(with: request).resume()
     }
 }
 
@@ -510,5 +559,109 @@ private final class WindowDragHandleView: NSView {
             if point.y > frame.height - titleBarHeight { return nil }
         }
         return self
+    }
+}
+
+/// Processes each complete SSE line once. Network callbacks can split a JSON
+/// event across arbitrary byte boundaries, so retaining only the unconsumed
+/// suffix avoids duplicated or corrupted text.
+private final class TextStreamDelegate: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+    var session: URLSession?
+    private let progress: (String) -> Void
+    private let done: (String) -> Void
+    private var pending = Data()
+    private var raw = Data()
+    private var text = ""
+    private var statusCode = 0
+    private var didFinish = false
+
+    init(progress: @escaping (String) -> Void, done: @escaping (String) -> Void) {
+        self.progress = progress
+        self.done = done
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        dataTask: URLSessionDataTask,
+        didReceive response: URLResponse,
+        completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
+    ) {
+        statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+        completionHandler(.allow)
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        raw.append(data)
+        pending.append(data)
+        while let newline = pending.firstIndex(of: 10) {
+            let line = pending[..<newline]
+            pending.removeSubrange(...newline)
+            consume(line)
+        }
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        defer {
+            session.finishTasksAndInvalidate()
+            self.session = nil
+        }
+        if !pending.isEmpty {
+            consume(pending[...])
+            pending.removeAll(keepingCapacity: false)
+        }
+
+        guard !didFinish else { return }
+
+        if !text.isEmpty {
+            finish(text)
+        } else if let message = Self.message(from: raw) {
+            finish(message)
+        } else {
+            let code = statusCode == 0 ? "" : " (\(statusCode))"
+            finish("request failed\(code)")
+        }
+    }
+
+    private func consume(_ line: Data.SubSequence) {
+        guard let rawLine = String(data: line, encoding: .utf8) else { return }
+        let trimmed = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("data: ") else { return }
+
+        let payload = String(trimmed.dropFirst(6))
+        if payload == "[DONE]" {
+            finish(text.isEmpty ? "request failed (empty)" : text)
+            return
+        }
+
+        guard let data = payload.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let choices = object["choices"] as? [[String: Any]],
+              let first = choices.first,
+              let delta = first["delta"] as? [String: Any],
+              let content = delta["content"] as? String,
+              !content.isEmpty else {
+            return
+        }
+        text += content
+        let snapshot = text
+        DispatchQueue.main.async { [progress] in progress(snapshot) }
+    }
+
+    private func finish(_ response: String) {
+        guard !didFinish else { return }
+        didFinish = true
+        DispatchQueue.main.async { [done] in done(response) }
+    }
+
+    private static func message(from data: Data) -> String? {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let choices = object["choices"] as? [[String: Any]],
+              let first = choices.first,
+              let message = first["message"] as? [String: Any],
+              let content = message["content"] as? String,
+              !content.isEmpty else {
+            return nil
+        }
+        return content
     }
 }
