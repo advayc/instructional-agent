@@ -47,6 +47,49 @@ the way. Its location is remembered for the next launch.
 The overlay is visual only: it never moves, clicks, or types with the real
 cursor.
 
+## Computer use (arc-cua)
+
+`arc-cua/` (vendored clone of [shhivv/arc-cua](https://github.com/shhivv/arc-cua))
+is the real computer-use runtime: it observes the desktop (Accessibility + local
+Apple Vision OCR), asks JEV for one UI action at a time, executes real clicks /
+typing / shortcuts with freshness guards, and returns `SUBTASK_COMPLETE`,
+`BLOCKED`, or `NEEDS_AGENT`. The Jev popup guides; arc-cua drives.
+
+Setup (already done on this Mac): `cd arc-cua && python3 -m venv .venv &&
+./.venv/bin/pip install -e './[macos]'`. Live runs need `TYPESAFE_API_KEY`
+(in `~/.zshrc`). Local tweaks vs upstream: `max_candidates=100` in the live
+examples (240 trips the provider's HTTP 400 on dense apps) plus an automatic
+halve-and-retry on 400 in `policies/typesafe.py`, and a new `examples/do.py`.
+
+What you can do with it right now:
+
+```sh
+cd arc-cua
+PYTHONPATH=src ./.venv/bin/python examples/do.py \
+  "In macOS System Settings, navigate to Appearance and select Dark." \
+  --app "System Settings" \
+  --verify "System Settings is showing the Appearance settings." \
+  --verify "Dark is selected as the current system appearance." \
+  --input search_query=Appearance \
+  --constraint "Do not modify any other setting."
+```
+
+- **Type any navigation/manipulation goal**: Settings panes, Calendar events
+  (`test_desktop.py` — switch to Calendar first, it waits 5s), Spotify search
+  + play (`test_spotify.py`), Appearance toggle (verified working end to end).
+- **Text it types always comes from you** via `--input key=value`; JEV only
+  chooses *which* supplied value goes *where*, never invents text.
+- **Probe perception without acting**: `macos_ax_probe.py` (Accessibility
+  tree), `ocr_probe.py` (visible text), `effects_demo.py` (no key needed).
+- **Results**: status, action count, and a per-step trace with JEV latency
+  (~0.2–0.5s per decision after the first).
+
+Rules for a good run: hands off mouse/keyboard for ~60s (focus theft aborts or
+misroutes the run), keep the target app frontmost, give 1–3 visible `--verify`
+criteria, state `--constraint`s for anything precious, and budget 12–20
+`--max-actions`. `BLOCKED` = no supported move visible; `NEEDS_AGENT` = needs
+judgment the structured UI state can't supply — reword and retry.
+
 ## Files
 
 - `JevApp.swift` — app lifecycle, guide progression, hotkey, and action detection.
