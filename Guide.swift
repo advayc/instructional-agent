@@ -7,8 +7,9 @@ struct GuideRequestError: LocalizedError {
     var errorDescription: String? { message }
 }
 
-/// The guide only describes the action a person should take. It is never an
-/// instruction for Jev to control another app.
+/// A plan is always grounded in the live Accessibility snapshot. When the
+/// person explicitly enables hands-free approval, the same bounded actions can
+/// be carried out by Jev instead of only being shown as a visual guide.
 enum GuideAction: String {
     case click
     case type
@@ -73,6 +74,14 @@ struct GuideStep: Decodable {
     let targetText: String?
     let targetRole: String?
     let targetId: String?
+    /// Exact literal text for a hands-free `type` action. Captions remain
+    /// human-readable instructions; this field is the only text Jev may send.
+    let text: String?
+    /// Modifier names and one key for a `shortcut` action, for example
+    /// ["command", "space"].
+    let keys: [String]?
+    /// A machine-readable direction for `scroll`: up, down, left, or right.
+    let direction: String?
 
     init(
         done: Bool? = nil,
@@ -81,7 +90,10 @@ struct GuideStep: Decodable {
         target: GuideTarget? = nil,
         targetText: String? = nil,
         targetRole: String? = nil,
-        targetId: String? = nil
+        targetId: String? = nil,
+        text: String? = nil,
+        keys: [String]? = nil,
+        direction: String? = nil
     ) {
         self.done = done
         self.action = action
@@ -90,6 +102,9 @@ struct GuideStep: Decodable {
         self.targetText = targetText
         self.targetRole = targetRole
         self.targetId = targetId
+        self.text = text
+        self.keys = keys
+        self.direction = direction
     }
 
     var isDone: Bool {
@@ -115,6 +130,38 @@ struct GuideStep: Decodable {
             return nil
         }
         return targetText
+    }
+
+    var automationText: String? {
+        guard let text else { return nil }
+        let cleaned = text.unicodeScalars
+            .filter { scalar in
+                scalar == "\n" || scalar == "\t" || !CharacterSet.controlCharacters.contains(scalar)
+            }
+            .map(String.init)
+            .joined()
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else { return nil }
+        return String(cleaned.prefix(1_200))
+    }
+
+    var automationKeys: [String]? {
+        let cleaned = (keys ?? []).compactMap { raw -> String? in
+            let key = raw.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !key.isEmpty, key.count <= 24,
+                  key.unicodeScalars.allSatisfy({ CharacterSet.alphanumerics.contains($0) || $0 == "-" }) else {
+                return nil
+            }
+            return key
+        }
+        guard !cleaned.isEmpty else { return nil }
+        return Array(cleaned.prefix(6))
+    }
+
+    var scrollDirection: String? {
+        let value = direction?.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let value, ["up", "down", "left", "right"].contains(value) else { return nil }
+        return value
     }
 
     var needsPointer: Bool {
@@ -144,7 +191,10 @@ struct GuideStep: Decodable {
             target: validTarget,
             targetText: normalizedTargetText,
             targetRole: targetRole?.trimmingCharacters(in: .whitespacesAndNewlines),
-            targetId: targetId?.trimmingCharacters(in: .whitespacesAndNewlines)
+            targetId: targetId?.trimmingCharacters(in: .whitespacesAndNewlines),
+            text: automationText,
+            keys: automationKeys,
+            direction: scrollDirection
         )
     }
 }

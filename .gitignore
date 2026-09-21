@@ -5,3 +5,4 @@ Jev.app
 *.xcuserdata/
 /jev
 /jev-ui
+arc-cua/.venv/

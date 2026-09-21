@@ -14,6 +14,9 @@ struct GuideDesktopElement {
     let point: CGPoint?
     let guardToken: String
     let isActionable: Bool
+    /// Kept local only. It is never serialized to the planner, but lets an
+    /// approved action use macOS Accessibility rather than a guessed selector.
+    let element: AXUIElement
 
     var compact: [String: Any] {
         var row: [String: Any] = [
@@ -36,6 +39,7 @@ struct GuideResolvedTarget {
     let bounds: CGRect?
     let guardToken: String
     let elementID: String
+    let element: AXUIElement
 }
 
 struct GuideDesktopSnapshot {
@@ -131,7 +135,13 @@ struct GuideDesktopSnapshot {
         if let id = step.targetId,
            let exact = elements.first(where: { $0.id == id }),
            let point = exact.point {
-            return GuideResolvedTarget(point: point, bounds: exact.bounds, guardToken: exact.guardToken, elementID: exact.id)
+            return GuideResolvedTarget(
+                point: point,
+                bounds: exact.bounds,
+                guardToken: exact.guardToken,
+                elementID: exact.id,
+                element: exact.element
+            )
         }
 
         guard let wanted = step.normalizedTargetText.map(Self.normalize) else { return nil }
@@ -176,7 +186,8 @@ struct GuideDesktopSnapshot {
             point: point,
             bounds: best.element.bounds,
             guardToken: best.element.guardToken,
-            elementID: best.element.id
+            elementID: best.element.id,
+            element: best.element.element
         )
     }
 
@@ -229,7 +240,8 @@ struct GuideDesktopSnapshot {
                 bounds: bounds,
                 point: bounds.map { CGPoint(x: $0.midX, y: $0.midY) },
                 guardToken: token,
-                isActionable: actionable
+                isActionable: actionable,
+                element: element
             ))
         }
 
