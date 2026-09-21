@@ -47,12 +47,6 @@ final class PopupPanel: NSPanel {
         effect.state = .active
         cv.addSubview(effect)
 
-        // Invisible drag handle across header so window moves even when
-        // click lands on empty labels; labels remain visible on top.
-        let headerDrag = WindowDragHandleView(frame: NSRect(x: 0, y: 132, width: 640, height: 100))
-        headerDrag.autoresizingMask = [.width, .minYMargin]
-        cv.addSubview(headerDrag)
-
         appIcon.image = NSImage(named: "Jev") ?? NSImage(named: NSImage.applicationIconName)
         appIcon.imageScaling = .scaleProportionallyUpOrDown
         appIcon.frame = NSRect(x: 34, y: 177, width: 23, height: 23)
@@ -73,6 +67,13 @@ final class PopupPanel: NSPanel {
         titleText.textColor = .labelColor
         titleText.frame = NSRect(x: 32, y: 139, width: 440, height: 29)
         cv.addSubview(titleText)
+
+        // Transparent drag handle LAST so it sits above the header labels
+        // (which otherwise swallow mouseDown). Labels stay visible through
+        // it; there are no buttons in the header to block.
+        let headerDrag = WindowDragHandleView(frame: NSRect(x: 0, y: 132, width: 640, height: 100))
+        headerDrag.autoresizingMask = [.width, .minYMargin]
+        cv.addSubview(headerDrag)
 
         box.frame = NSRect(x: 24, y: 42, width: 592, height: 82)
         box.wantsLayer = true
