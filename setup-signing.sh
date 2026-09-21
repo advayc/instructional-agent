@@ -6,8 +6,13 @@ set -euo pipefail
 IDENTITY="$(/usr/bin/security find-identity -v -p codesigning | /usr/bin/sed -n 's/^[[:space:]]*[0-9][[:space:]]*) \([A-F0-9][A-F0-9]*\) .*/\1/p' | /usr/bin/head -n 1)"
 
 if [[ -z "$IDENTITY" ]]; then
-    print -u2 "No usable macOS code-signing identity was found. Add an Apple Development or Developer ID identity to your login keychain, then rerun the build."
-    exit 1
+    # A valid Apple signing identity is best because macOS can retain TCC
+    # approval across rebuilds. Keep development usable without Xcode when a
+    # certificate has expired or is unavailable; the bundle is still signed,
+    # but macOS may ask once again after a rebuild.
+    print -u2 "No valid Apple code-signing identity is available; using an ad-hoc bundle signature."
+    print -r -- "-"
+    exit 0
 fi
 
 print -r -- "$IDENTITY"

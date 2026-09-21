@@ -44,7 +44,7 @@ final class OverlayWindow: NSWindow {
     func showCompletion(_ caption: String) {
         let point = marker.hasPlacedCursor ? marker.point : localPoint(from: NSEvent.mouseLocation)
         marker.present(caption: caption, from: point, to: point, showsCursor: false)
-        hideAt = Date().addingTimeInterval(2.6)
+        hideAt = Date().addingTimeInterval(1.7)
         orderFrontRegardless()
         ensureTimer()
     }
@@ -70,7 +70,7 @@ final class OverlayWindow: NSWindow {
 
     private func ensureTimer() {
         guard timer == nil else { return }
-        let next = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
+        let next = Timer.scheduledTimer(withTimeInterval: 1.0 / 120.0, repeats: true) { [weak self] _ in
             self?.tick()
         }
         RunLoop.main.add(next, forMode: .common)
@@ -118,16 +118,16 @@ private final class GuideMarkerView: NSView {
     @discardableResult
     func tick() -> Bool {
         let elapsed = Date().timeIntervalSince(beganAt)
-        let travel = CGFloat(min(1, elapsed / 0.38))
+        let travel = CGFloat(min(1, elapsed / 0.16))
         let eased = travel * travel * (3 - 2 * travel)
         point = NSPoint(
             x: origin.x + (destination.x - origin.x) * eased,
             y: origin.y + (destination.y - origin.y) * eased
         )
-        bubbleOpacity = CGFloat(min(1, elapsed / 0.16))
-        cursorOpacity = showsCursor ? CGFloat(min(1, elapsed / 0.14)) : 0
+        bubbleOpacity = CGFloat(min(1, elapsed / 0.08))
+        cursorOpacity = showsCursor ? CGFloat(min(1, elapsed / 0.07)) : 0
 
-        let letters = min(caption.count, Int(max(0, elapsed - 0.10) / 0.018))
+        let letters = min(caption.count, Int(max(0, elapsed - 0.035) / 0.007))
         displayedCaption = String(caption.prefix(letters))
         needsDisplay = true
         return travel < 1 || letters < caption.count
@@ -181,10 +181,6 @@ private final class GuideMarkerView: NSView {
         NSColor(calibratedWhite: 0.055, alpha: 0.94 * bubbleOpacity).setFill()
         path.fill()
         NSGraphicsContext.restoreGraphicsState()
-
-        NSColor(calibratedRed: 1.0, green: 0.77, blue: 0.16, alpha: 0.70 * bubbleOpacity).setStroke()
-        path.lineWidth = 1
-        path.stroke()
 
         let accent = NSBezierPath(roundedRect: NSRect(x: bubble.minX + 13, y: bubble.minY + 12, width: 3, height: bubble.height - 24), xRadius: 1.5, yRadius: 1.5)
         NSColor(calibratedRed: 1.0, green: 0.77, blue: 0.16, alpha: bubbleOpacity).setFill()

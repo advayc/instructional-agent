@@ -1,5 +1,5 @@
 .env
-Jev.app/
+Jev.app
 .DS_Store
 /build/
 *.xcuserdata/
