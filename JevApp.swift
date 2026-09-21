@@ -1,4 +1,5 @@
 import AppKit
+import ApplicationServices
 import CoreGraphics
 
 final class JevApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
@@ -14,6 +15,7 @@ final class JevApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var eventMonitors: [Any] = []
     private var workspaceObserver: NSObjectProtocol?
     private var canObserveGlobalInput = false
+    private var globalMonitorsInstalled = false
     private let cursor = CursorDriver()
     private var isExecutingApprovedStep = false
 
@@ -28,7 +30,7 @@ final class JevApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
         popup.input.action = #selector(send(_:))
         popup.delegate = self
         popup.onApprovalChanged = { [weak self] enabled in
-            self?.approvalChanged(enabled)
+            self?.approvalChanged(enabled, userInitiated: true)
         }
         for button in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] {
             popup.standardWindowButton(button)?.isHidden = false
@@ -36,7 +38,7 @@ final class JevApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
         showPrompt()
         installEventMonitors()
         if popup.autoApprovalEnabled {
-            approvalChanged(true)
+            approvalChanged(true, userInitiated: false)
         }
     }
 
@@ -124,6 +126,14 @@ final class JevApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // Input Monitoring improves click-following, but Jev's visual guide
         // must never be blocked by it. When unavailable, a screen/AX watcher
         // advances only after visible progress instead of prompting again.
+        ensureGlobalMonitors()
+    }
+
+    /// Re-checks Input Monitoring live and installs global monitors on demand.
+    /// The launch-time check goes stale when the person grants access while
+    /// Jev is running, which made approval look broken until a reopen.
+    private func ensureGlobalMonitors() {
+        guard !globalMonitorsInstalled else { return }
         canObserveGlobalInput = hasInputMonitoringAccess()
         guard canObserveGlobalInput else { return }
 
@@ -143,6 +153,7 @@ final class JevApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self?.lastCmd = now
         }
         if let command { eventMonitors.append(command) }
+        globalMonitorsInstalled = true
     }
 
     private func handleLocalKey(_ event: NSEvent) -> NSEvent? {
@@ -161,23 +172,41 @@ final class JevApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return event
     }
 
-    private func approvalChanged(_ enabled: Bool) {
+    private func approvalChanged(_ enabled: Bool, userInitiated: Bool) {
         guard enabled else {
             cursor.cancel()
             isExecutingApprovedStep = false
             return
         }
         guard GuideDesktopSnapshot.accessibilityIsAvailable else {
+            if userInitiated { requestHandsFreePermissions() }
             popup.setAutoApprovalEnabled(false, persist: true)
             popup.showSetupIssue("Allow Jev in Accessibility before turning on Approve for me.")
             return
         }
+        // Re-check live: a grant made while Jev runs must take effect
+        // without a reopen.
+        ensureGlobalMonitors()
         guard canObserveGlobalInput else {
+            if userInitiated { requestHandsFreePermissions() }
             popup.setAutoApprovalEnabled(false, persist: true)
-            popup.showSetupIssue("Allow Jev in Input Monitoring and reopen it so Esc can stop an approved run instantly.")
+            popup.showSetupIssue("Allow Jev in Input Monitoring, then tap Approve for me again so Esc can stop an approved run instantly.")
             return
         }
         popup.status.stringValue = "Approval is on — Jev will complete routine on-screen steps for your next request."
+    }
+
+    /// The user explicitly pressed Approve for me, so it is appropriate to ask
+    /// macOS for the two permissions that make the stop key and real input
+    /// possible. The app never raises these dialogs merely by launching.
+    private func requestHandsFreePermissions() {
+        if !GuideDesktopSnapshot.accessibilityIsAvailable {
+            let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
+            _ = AXIsProcessTrustedWithOptions([key: true] as CFDictionary)
+        }
+        if #available(macOS 10.15, *), !hasInputMonitoringAccess() {
+            _ = CGRequestListenEventAccess()
+        }
     }
 
     private func isManualAdvance(_ event: NSEvent) -> Bool {
@@ -290,6 +319,20 @@ final class JevApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
             title = String(task[r]).components(separatedBy: " by ").first?
                 .replacingOccurrences(of: "^(play|search for|listen to) ", with: "", options: [.regularExpression, .caseInsensitive])
                 .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        if title == nil {
+            // "play SICKO MODE on Spotify" — no quotes, no artist. Strip the
+            // verb and app name and treat the rest as the title.
+            var rest = lower
+            for verb in ["play ", "search for ", "search ", "listen to ", "listen "] {
+                if let r = rest.range(of: verb) { rest = String(rest[r.upperBound...]); break }
+            }
+            for suffix in [" on spotify", " in spotify", " using spotify", " on music", " in music"] {
+                if let r = rest.range(of: suffix) { rest = String(rest[..<r.lowerBound]) }
+            }
+            if let r = rest.range(of: " by ") { rest = String(rest[..<r.lowerBound]) }
+            rest = rest.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !rest.isEmpty, rest.count < 80 { title = rest }
         }
         var artist: String?
         if let r = task.range(of: " by (.+?)( →|\u{2192}|\\.| on spotify|$)", options: [.regularExpression, .caseInsensitive]) {
@@ -715,7 +758,7 @@ final class JevApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 pauseGuide("Jev did not receive a concrete next action, so it stopped instead of retrying the same request.")
                 return
             }
-            if mode == .replan || mode == .verify {
+            if mode == .replan {
                 session.replanCount += 1
             }
             if !plan.sanitizedVerification.isEmpty {
@@ -939,7 +982,7 @@ final class JevApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
         session: GuideSession,
         snapshot: GuideDesktopSnapshot?
     ) -> Bool {
-        guard step.validTarget != nil, session.nextStepIndex == 0 else { return false }
+        guard step.validTarget != nil else { return false }
         guard let expected = session.planSnapshotRevision else { return true }
         return expected == snapshot?.revision
     }
