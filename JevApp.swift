@@ -161,7 +161,47 @@ final class JevApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let task = sender.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !task.isEmpty else { return }
         if performNativeAction(task) { return }
+        if performDirectAnswer(task) { return }
         startGuide(task: task)
+    }
+
+    /// General questions get a text answer in the popup instead of a
+    /// click-guide inside whatever app happens to be frontmost.
+    private func performDirectAnswer(_ task: String) -> Bool {
+        guard isGeneralQuestion(task) else { return false }
+        popup.preparingAnswer()
+        popup.orderFrontRegardless()
+        NSApp.activate(ignoringOtherApps: true)
+        popup.requestAnswer(task: task, frontmostApp: lastExternalAppName) { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .success(let text):
+                self.popup.showAnswer(text)
+            case .failure(let error):
+                self.popup.showSetupIssue(error.message)
+            }
+            self.popup.orderFrontRegardless()
+            NSApp.activate(ignoringOtherApps: true)
+            self.popup.makeKey()
+            self.popup.makeFirstResponder(self.popup.input)
+        }
+        return true
+    }
+
+    private func isGeneralQuestion(_ task: String) -> Bool {
+        let lower = task.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        if lower.hasSuffix("?") { return true }
+        let starters = ["what ", "what's ", "whats ", "who ", "why ", "how ", "when ", "where ",
+                        "explain ", "define ", "summarize ", "summarise ", "tell me ", "write ",
+                        "draft ", "compose ", "calculate ", "convert ", "translate "]
+        if starters.contains(where: { lower.hasPrefix($0) }) { return true }
+        // No actionable macOS verb → treat as chat, not a click-guide.
+        let actionWords = ["click", "open", "turn on", "turn off", "enable", "disable",
+                           "set ", "change ", "switch ", "timer", "alarm", "remind",
+                           "mute", "unmute", "volume", "dark mode", "light mode",
+                           "install", "download", "create file", "delete ", "move "]
+        if !actionWords.contains(where: { lower.contains($0) }) { return true }
+        return false
     }
 
     /// Fast path for safe, reversible macOS actions. Unknown requests keep
@@ -192,6 +232,12 @@ final class JevApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
         } else if let level = requestedVolume(in: normalized) {
             script = "set volume output volume \(level) without output muted"
             completion = "Volume is \(level)%."
+        } else if let seconds = requestedDuration(in: task) {
+            startNativeTimer(seconds: seconds, original: task)
+            return true
+        } else if let appName = requestedOpenApp(in: task) {
+            openMacApp(named: appName, original: task)
+            return true
         } else {
             return false
         }
@@ -225,6 +271,144 @@ final class JevApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return min(100, level)
     }
 
+    /// "set a 5 min timer", "timer 10 seconds", "5 minute countdown" → seconds.
+    private func requestedDuration(in task: String) -> TimeInterval? {
+        let lower = task.lowercased()
+        guard lower.contains("timer") || lower.contains("countdown") || lower.contains("alarm in") else { return nil }
+        guard let numMatch = lower.range(of: #"\d+(\.\d+)?"#, options: .regularExpression) else { return nil }
+        guard let value = Double(lower[numMatch]) else { return nil }
+        let multiplier: Double
+        if lower.contains("hour") || lower.contains(" hr") { multiplier = 3600 }
+        else if lower.contains("min") { multiplier = 60 }
+        else if lower.contains("sec") { multiplier = 1 }
+        else { multiplier = 60 } // "timer 5" means 5 minutes
+        let seconds = value * multiplier
+        guard seconds >= 1, seconds <= 12 * 3600 else { return nil }
+        return seconds
+    }
+
+    private func startNativeTimer(seconds: TimeInterval, original: String) {
+        popup.preparingAction()
+        let label: String
+        if seconds >= 3600 {
+            label = String(format: "Timer for %.1f hr started.", seconds / 3600)
+        } else if seconds >= 60 {
+            label = String(format: "Timer for %.0f min started.", seconds / 60)
+        } else {
+            label = String(format: "Timer for %.0f sec started.", seconds)
+        }
+        popup.reset(message: label)
+        overlay.showCompletion(label)
+        popup.orderFrontRegardless()
+        NSApp.activate(ignoringOtherApps: true)
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
+            guard let self else { return }
+            NSSound.beep()
+            let done = "Done — your \(Int(seconds / 60) > 0 ? "\(Int(seconds / 60))-minute " : "")timer finished."
+            self.overlay.showCompletion(done)
+            self.popup.reset(message: done)
+            self.popup.orderFrontRegardless()
+            NSApp.activate(ignoringOtherApps: true)
+        }
+    }
+
+    /// "open Safari", "launch Notes", "start Spotify" → app name.
+    private func requestedOpenApp(in task: String) -> String? {
+        let lower = task.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        for verb in ["open ", "launch ", "start ", "quit "] {
+            guard lower.hasPrefix(verb) else { continue }
+            var name = String(lower.dropFirst(verb.count))
+            for filler in [" the ", " app", " application"] { name = name.replacingOccurrences(of: filler, with: " ") }
+            name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !name.isEmpty, name.count < 40 else { return nil }
+            if lower.hasPrefix("quit ") { return nil } // quitting stays a guided/safe op for now
+            return name
+        }
+        return nil
+    }
+
+    private func openMacApp(named name: String, original: String) {
+        popup.preparingAction()
+        DispatchQueue.global(qos: .userInteractive).async { [weak self] in
+            let workspace = NSWorkspace.shared
+            var opened = false
+            if let running = workspace.runningApplications.first(where: {
+                $0.localizedName?.lowercased() == name.lowercased()
+            }) {
+                opened = running.activate(options: [])
+            } else {
+                // `open -a` resolves by display name ("Safari", "System Settings", "Spotify").
+                let proc = Process()
+                proc.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+                proc.arguments = ["-a", name]
+                opened = (try? proc.run()) != nil
+                if opened { proc.waitUntilExit(); opened = proc.terminationStatus == 0 }
+            }
+            let message = opened ? "Opened \(name)." : "Could not find \(name). Try the exact app name."
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if opened {
+                    self.popup.reset(message: message)
+                    self.overlay.showCompletion(message)
+                } else {
+                    self.popup.showSetupIssue(message)
+                }
+                self.popup.orderFrontRegardless()
+                NSApp.activate(ignoringOtherApps: true)
+                self.popup.makeKey()
+                self.popup.makeFirstResponder(self.popup.input)
+            }
+        }
+    }
+
+    /// Which macOS app should this task guide in? nil = stay in current app.
+    /// Prevents system tasks (timer, settings, reminders…) from planning
+    /// clicks inside an unrelated frontmost app like VSCode.
+    private func guideTargetAppName(for task: String) -> String? {
+        let lower = task.lowercased()
+        // Explicit mention wins: "in Safari", "using Notes", "open Clock and…".
+        let knownApps = ["safari", "chrome", "firefox", "arc", "mail", "calendar",
+                         "reminders", "notes", "messages", "facetime", "photos",
+                         "music", "spotify", "clock", "finder", "terminal",
+                         "system settings", "settings", "app store", "preview",
+                         "numbers", "pages", "keynote", "xcode", "slack", "discord"]
+        for app in knownApps {
+            if lower.contains(app) { return app == "settings" ? "System Settings" : app.capitalized }
+        }
+        if lower.contains("alarm") || lower.contains("stopwatch") { return "Clock" }
+        if lower.contains("reminder") || lower.contains("todo ") || lower.contains("to-do") { return "Reminders" }
+        if lower.contains("note ") || lower.contains("jot ") { return "Notes" }
+        if lower.contains("email") || lower.contains("inbox") { return "Mail" }
+        if lower.contains("event") || lower.contains("meeting") || lower.contains("schedule ") { return "Calendar" }
+        if lower.contains("wifi") || lower.contains("wi-fi") || lower.contains("bluetooth")
+            || lower.contains("wallpaper") || lower.contains("screensaver")
+            || lower.contains("do not disturb") || lower.contains("focus mode")
+            || lower.contains("apple id") || lower.contains("icloud")
+            || lower.contains("battery") || lower.contains("display settings")
+            || lower.contains("sound settings") { return "System Settings" }
+        return nil
+    }
+
+    private func launchGuideApp(named name: String, done: @escaping () -> Void) {
+        DispatchQueue.global(qos: .userInteractive).async {
+            if NSWorkspace.shared.runningApplications.contains(where: {
+                $0.localizedName?.lowercased() == name.lowercased()
+            }) {
+                NSWorkspace.shared.runningApplications.first(where: {
+                    $0.localizedName?.lowercased() == name.lowercased()
+                })?.activate(options: [])
+            } else {
+                let proc = Process()
+                proc.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+                proc.arguments = ["-a", name]
+                try? proc.run()
+                proc.waitUntilExit()
+            }
+            // Give the routed app time to become frontmost before snapshotting.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.9, execute: done)
+        }
+    }
+
     private func startGuide(task: String) {
         // Do this before hiding the card. If macOS has associated the Privacy
         // & Security switch with an older Jev signature, the old behavior hid
@@ -243,6 +427,22 @@ final class JevApp: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guide = newGuide
         popup.preparingGuide()
         popup.orderOut(nil)
+
+        // Route to the right app instead of guiding inside whatever happens
+        // to be frontmost (e.g. a timer must not plan clicks inside VSCode).
+        if let routed = guideTargetAppName(for: task),
+           routed.lowercased() != lastExternalAppName.lowercased() {
+            overlay.showThinking(at: NSEvent.mouseLocation)
+            launchGuideApp(named: routed) { [weak self] in
+                guard let self, self.guide?.id == newGuide.id else { return }
+                if let front = NSWorkspace.shared.frontmostApplication {
+                    self.rememberExternalApp(front)
+                }
+                self.requestPlan(for: newGuide, mode: .initial)
+            }
+            return
+        }
+
         activateGuideTarget()
         overlay.showThinking(at: NSEvent.mouseLocation)
 

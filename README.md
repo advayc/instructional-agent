@@ -1,6 +1,9 @@
-# jev — on-screen macOS guide
+# jev — general macOS assistant
 
-Jev is a fast, visual guide rather than a chatbot. Describe a task, then it
+Jev answers general questions directly and guides on-screen work step by step.
+Ask anything: it answers chat-style in the popup, does safe instant actions
+itself (appearance, volume, timers, opening apps), and otherwise routes a
+visual guide to the right Mac app — not just whatever is frontmost. The guide
 points to one live control at a time with a transparent virtual cursor and a
 type-on caption. You remain in control of the real mouse and keyboard.
 
@@ -15,17 +18,31 @@ open Jev.app          # convenience link to the installed app
 
 The app hides its prompt once a guide starts and returns focus to the app you
 were using. It asks for one short plan, then resolves the next visible target
-locally and moves on without another remote round trip after every click. It
-uses a short UI-settle check after each action, verifies the visible end state,
-and pauses instead of endlessly repeating an unconfirmed instruction.
+locally and moves on without another remote round trip after every click. When
+Accessibility exposes live controls, the first request sends that compact data
+instead of a full-screen image; screenshots remain a fallback for apps that do
+not expose usable controls. It uses a short UI-settle check after each action,
+verifies the visible end state, and pauses instead of endlessly repeating an
+unconfirmed instruction.
 
-Safe native actions bypass vision and run immediately. Jev currently handles
-dark mode, light mode, mute, unmute, and volume levels such as `volume 40`.
-Other requests continue through the visual guide; model output never becomes
-shell code.
+Three paths, in order:
+
+1. **Instant native** — dark/light mode, mute/unmute, `volume 40`,
+   `set a 5 min timer`, `open Safari`. Runs immediately, no vision needed.
+2. **Direct answer** — general questions (`what…?`, `explain…`, `write…`)
+   answered as text in the popup, never as clicks inside a random app.
+3. **Routed guide** — everything else opens/guides in the right app
+   (Clock for alarms, Reminders for todos, System Settings for Wi-Fi/
+   wallpaper/Focus, Mail/Calendar/Notes when named). A `5 min timer` no
+   longer plans clicks inside VSCode just because it was frontmost.
+
+Model output never becomes shell code; native actions are a fixed safe list.
 
 If it cannot observe an action, press Option-Right Arrow to advance manually.
 Escape stops the guide, and double-Command toggles Jev.
+
+Drag the prompt from its header (labelled **Drag to move**) to keep it out of
+the way. Its location is remembered for the next launch.
 
 The overlay is visual only: it never moves, clicks, or types with the real
 cursor.
