@@ -13,7 +13,7 @@ source "$DIR/.env"
 set +a
 mkdir -p "$MODULE_CACHE"
 swiftc -O -module-cache-path "$MODULE_CACHE" "$DIR/jev.swift" -o "$DIR/jev"
-swiftc -O -module-cache-path "$MODULE_CACHE" "$DIR/Guide.swift" "$DIR/DesktopSnapshot.swift" "$DIR/Cursor.swift" "$DIR/JevApp.swift" "$DIR/PopupPanel.swift" "$DIR/OverlayWindow.swift" "$DIR/main.swift" -o "$DIR/jev-ui"
+swiftc -O -module-cache-path "$MODULE_CACHE" "$DIR/Actions.swift" "$DIR/Web.swift" "$DIR/JevApp.swift" "$DIR/PopupPanel.swift" "$DIR/OverlayWindow.swift" "$DIR/main.swift" -o "$DIR/jev-ui"
 mkdir -p "$STAGED_APP/Contents/MacOS" "$STAGED_APP/Contents/Resources"
 cp "$DIR/jev-ui" "$STAGED_APP/Contents/MacOS/jev-ui"
 ICONSET="$STAGE_ROOT/Jev.iconset"

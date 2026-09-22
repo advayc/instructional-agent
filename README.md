@@ -1,8 +1,6 @@
 # jev — macOS assistant
 
-Answers, acts, and guides on-screen with a live cursor.
-
-![Jev popup](Assets/popup.png)
+Type plaintext, it does it. Same input every time.
 
 ```sh
 ./run.sh "question"  # CLI
@@ -10,24 +8,33 @@ Answers, acts, and guides on-screen with a live cursor.
 open Jev.app         # UI, double-Cmd toggles
 ```
 
-Option-Right advances guide, Escape stops.
+Type, Enter, done. Jev runs it immediately and reports back.
 
 Things you can say:
 
-Instant — `turn on Do Not Disturb`, `dark mode`, `volume 40`, `mute`,
-`set a 5 min timer`, `open Spotify`.
+Apps — `open excel`, `launch Google Chrome`, `quit slack`.
 
-Does it — `play SICKO MODE by Travis Scott on Spotify`.
+Spotify — `play SICKO MODE on Spotify`, `pause spotify`, `next song on spotify`.
 
-Shows you, in the right app — `turn on Wi-Fi`, `change my wallpaper`,
-`create a calendar event`, anything naming an app.
+Chrome — `open my bookmarks`, `open github bookmark`, `search google for best ramen`, `open youtube.com`.
+
+Terminal — `open a new terminal with opencode running`, `terminal run npm test`.
+
+Web — `open gmail`, `search amazon for headphones`, `find airpods on youtube`.
+Multi-step jobs (`book a flight from sfo to jfk on kayak`,
+`make a github repo with random info`) run start to finish in Chrome:
+snapshot, click, type, read, done. Compounds (`open excel then search
+amazon for cables`) split into ordered steps. Passwords, logins,
+payments, and checkout stop with a status instead of completing.
+
+System — `dark mode`, `volume 40`, `mute`, `set a 5 min timer`.
 
 Answers as text — `what's sequestration?`, `explain ...`, `write ...`
 
-Click **Approve for me** in the prompt to let Jev complete routine, visible
-steps itself (click, type, shortcut, scroll, and verify). It stays off by
-default and pauses for passwords, payments, deletions, and security/privacy
-prompts; messages are sent only when your request explicitly asks for one.
+Common commands parse locally (no network). Ambiguous phrasing routes once
+through the model into the same allowlisted actions — never free-form shell.
 
 Setup: `.env` with `AI_GATEWAY_API_KEY`, `AI_GATEWAY_MODEL=vmc/jev`.
-Needs Screen Recording + Accessibility + Input Monitoring.
+Needs Accessibility + Automation + Input Monitoring.
+Website tasks need one toggle: Chrome → View → Developer →
+Allow JavaScript from Apple Events.
